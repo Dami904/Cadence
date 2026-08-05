@@ -90,7 +90,11 @@ export function useTrustScore() {
 
   const completions = useMemo(() => outcomes.filter((o) => o.tag === TRUST_SCORE_TAGS.completion).length, [outcomes]);
   const defaults = useMemo(() => outcomes.filter((o) => o.tag === TRUST_SCORE_TAGS.default).length, [outcomes]);
-  const score = useMemo(() => Math.max(0, Math.min(100, 100 - defaults * 20)), [defaults]);
+  // No recorded outcomes yet reads as a neutral 100, not a penalty for having no history.
+  const score = useMemo(() => {
+    const total = completions + defaults;
+    return total === 0 ? 100 : Math.round((completions / total) * 100);
+  }, [completions, defaults]);
   const mostRecent = outcomes[0];
 
   const refetchLinked = useCallback(() => {

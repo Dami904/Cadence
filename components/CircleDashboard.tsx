@@ -41,7 +41,7 @@ function statusLabel(status: number | undefined) {
 export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
   const { address: myAddress, isConnected } = useAccount();
   const details = useCircleDetails(circleAddress);
-  const [pendingAction, setPendingAction] = useState<"approve" | "contribute" | null>(null);
+  const [pendingAction, setPendingAction] = useState<"approve" | "contribute" | "start" | "replenish" | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const { data: txHash, error: writeError, isPending, writeContract } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
@@ -53,11 +53,13 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
     currentRoundDeadline,
     currentRoundFunding,
     contributionAmount,
+    depositAmount,
     targetMemberCount,
     memberStatuses,
     recipient,
     asset,
     amIMember,
+    mySecurityDeposit,
     hasContributedThisRound,
     refetch,
   } = details;
@@ -73,7 +75,7 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
   useEffect(() => {
     if (!isSuccess || !pendingAction) return;
     if (pendingAction === "approve") refetchAllowance();
-    if (pendingAction === "contribute") refetch();
+    if (pendingAction === "contribute" || pendingAction === "start" || pendingAction === "replenish") refetch();
     setPendingAction(null);
   }, [isSuccess, pendingAction, refetchAllowance, refetch]);
 
@@ -105,6 +107,10 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
     ? new Date(Number(currentRoundDeadline) * 1000).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })
     : "—";
   const contributeLoading = (isPending || isConfirming) && pendingAction !== null;
+  const isFull = memberStatuses.length > 0 && BigInt(memberStatuses.length) === targetMemberCount;
+  const depositShortfall = amIMember && depositAmount !== undefined && mySecurityDeposit !== undefined
+    ? depositAmount - mySecurityDeposit
+    : 0n;
 
   const copyInviteLink = () => {
     navigator.clipboard.writeText(`${window.location.origin}/join?address=${circleAddress}`);
@@ -123,6 +129,23 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
     writeContract({ address: circleAddress, abi: ajoCircleAbi, functionName: "contribute" });
   };
 
+  const startCircle = () => {
+    if (!isConnected || status !== CircleStatus.Forming || !isFull) return;
+    setPendingAction("start");
+    writeContract({ address: circleAddress, abi: ajoCircleAbi, functionName: "start" });
+  };
+
+  const replenishDeposit = () => {
+    if (!isConnected || !asset || depositShortfall <= 0n) return;
+    if ((allowance ?? 0n) < depositShortfall) {
+      setPendingAction("approve");
+      writeContract({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, depositShortfall] });
+      return;
+    }
+    setPendingAction("replenish");
+    writeContract({ address: circleAddress, abi: ajoCircleAbi, functionName: "replenishDeposit" });
+  };
+
   return (
     <>
       <div className="intro-row">
@@ -136,11 +159,24 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
       {status === CircleStatus.Forming ? (
         <section className="dashboard-empty">
           <div className="dashboard-empty-icon"><Sparkles size={22} /></div>
-          <h3>Waiting for members to join.</h3>
-          <p>{memberStatuses.length} of {String(targetMemberCount)} members have joined. The circle starts automatically once it&apos;s full.</p>
-          <button className="outline-button" onClick={copyInviteLink} type="button">
-            {linkCopied ? <><Check size={15} /> Copied</> : <><Copy size={15} /> Copy invite link</>}
-          </button>
+          {isFull ? (
+            <>
+              <h3>All members have joined.</h3>
+              <p>The rotation order is locked in join order. Start the circle to open round one — anyone in the circle can do this.</p>
+              <button className="solid-button" onClick={startCircle} disabled={contributeLoading} type="button">
+                <Zap size={17} /> {contributeLoading ? "Starting…" : "Start circle"}
+              </button>
+            </>
+          ) : (
+            <>
+              <h3>Waiting for members to join.</h3>
+              <p>{memberStatuses.length} of {String(targetMemberCount)} members have joined. Anyone can start the circle once it&apos;s full.</p>
+              <button className="outline-button" onClick={copyInviteLink} type="button">
+                {linkCopied ? <><Check size={15} /> Copied</> : <><Copy size={15} /> Copy invite link</>}
+              </button>
+            </>
+          )}
+          {writeError && <p className="form-error dashboard-error">{writeError.message}</p>}
         </section>
       ) : (
         <>
@@ -180,6 +216,21 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
           <div className="stats-grid">
             <article className="stat-card"><div className="stat-icon peach"><HandCoins size={19} /></div><div><p>YOUR CONTRIBUTION</p><strong>{formatUnits(contributionAmount, 6)}</strong><small className={hasContributedThisRound ? "positive" : "pending"}>{hasContributedThisRound ? "Paid for this round" : amIMember ? "Not yet paid" : "Not a member"}</small></div></article>
             <article className="stat-card"><div className="stat-icon violet"><Gauge size={19} /></div><div><p>CIRCLE HEALTH</p><strong>{contributedCount === Number(targetMemberCount) ? "Fully funded" : "In progress"}</strong><small>{currentRoundFunding !== undefined ? `${formatUnits(currentRoundFunding, 6)} of ${formatUnits(pot, 6)} collected` : ""}</small></div></article>
+            {amIMember && depositAmount !== undefined && (
+              <article className="stat-card">
+                <div className="stat-icon blue"><ShieldCheck size={19} /></div>
+                <div>
+                  <p>SECURITY DEPOSIT</p>
+                  <strong>{formatUnits(mySecurityDeposit ?? 0n, 6)}<span> / {formatUnits(depositAmount, 6)}</span></strong>
+                  <small className={depositShortfall > 0n ? "pending" : "positive"}>{depositShortfall > 0n ? "Top up to stay protected" : "Fully covered"}</small>
+                  {depositShortfall > 0n && (
+                    <button className="text-button" onClick={replenishDeposit} disabled={contributeLoading} type="button">
+                      {contributeLoading ? "Working…" : "Top up"}
+                    </button>
+                  )}
+                </div>
+              </article>
+            )}
           </div>
 
           <section className="section-card members-card">

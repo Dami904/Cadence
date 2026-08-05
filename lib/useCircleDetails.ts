@@ -24,6 +24,7 @@ export function useCircleDetails(circleAddress: Address | undefined) {
       { address: circle, abi: ajoCircleAbi, functionName: "currentRoundDeadline" },
       { address: circle, abi: ajoCircleAbi, functionName: "currentRoundFunding" },
       { address: circle, abi: ajoCircleAbi, functionName: "contributionAmount" },
+      { address: circle, abi: ajoCircleAbi, functionName: "depositAmount" },
       { address: circle, abi: ajoCircleAbi, functionName: "targetMemberCount" },
       { address: circle, abi: ajoCircleAbi, functionName: "getMembers" },
       { address: circle, abi: ajoCircleAbi, functionName: "asset" },
@@ -31,13 +32,14 @@ export function useCircleDetails(circleAddress: Address | undefined) {
     query: { enabled },
   });
 
-  const [statusR, roundR, deadlineR, fundingR, contribR, targetR, membersR, assetR] = coreResults ?? [];
+  const [statusR, roundR, deadlineR, fundingR, contribR, depositR, targetR, membersR, assetR] = coreResults ?? [];
 
   const status = statusR?.status === "success" ? Number(statusR.result) : undefined;
   const currentRound = roundR?.status === "success" ? (roundR.result as bigint) : undefined;
   const currentRoundDeadline = deadlineR?.status === "success" ? (deadlineR.result as bigint) : undefined;
   const currentRoundFunding = fundingR?.status === "success" ? (fundingR.result as bigint) : undefined;
   const contributionAmount = contribR?.status === "success" ? (contribR.result as bigint) : undefined;
+  const depositAmount = depositR?.status === "success" ? (depositR.result as bigint) : undefined;
   const targetMemberCount = targetR?.status === "success" ? (targetR.result as bigint) : undefined;
   const members = membersR?.status === "success" ? (membersR.result as Address[]) : undefined;
   const asset = assetR?.status === "success" ? (assetR.result as Address) : undefined;
@@ -79,11 +81,20 @@ export function useCircleDetails(circleAddress: Address | undefined) {
     query: { enabled: enabled && Boolean(address) },
   });
 
+  const { data: mySecurityDeposit, refetch: refetchMyDeposit } = useReadContract({
+    address: circle,
+    abi: ajoCircleAbi,
+    functionName: "securityDepositBalance",
+    args: [address ?? zeroAddress],
+    query: { enabled: enabled && Boolean(address) },
+  });
+
   const myStatus = memberStatuses.find((member) => member.isYou);
 
   const refetch = () => {
     refetchCore();
     refetchMemberStatus();
+    refetchMyDeposit();
   };
 
   return {
@@ -94,12 +105,14 @@ export function useCircleDetails(circleAddress: Address | undefined) {
     currentRoundDeadline,
     currentRoundFunding,
     contributionAmount,
+    depositAmount,
     targetMemberCount,
     members,
     memberStatuses,
     recipient,
     asset,
     amIMember: Boolean(amIMember),
+    mySecurityDeposit: mySecurityDeposit as bigint | undefined,
     hasContributedThisRound: Boolean(myStatus?.contributed),
   };
 }

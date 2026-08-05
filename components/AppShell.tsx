@@ -28,7 +28,7 @@ export function AppShell({ active, title, children }: { active: string; title: s
     <main className="product-shell">
       <aside className={`sidebar ${showMobileNav ? "sidebar-open" : ""}`}>
         <div className="brand-row">
-          <Link href="/dashboard" className="brand-link" onClick={() => setShowMobileNav(false)}>
+          <Link href="/welcome" className="brand-link" onClick={() => setShowMobileNav(false)}>
             <div className="brand-mark"><span>c</span></div>
             <span className="brand-name">cadence</span>
           </Link>

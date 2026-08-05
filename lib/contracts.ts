@@ -108,6 +108,8 @@ export const ajoCircleAbi = [
   },
   { type: "function", name: "join", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "contribute", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { type: "function", name: "start", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { type: "function", name: "replenishDeposit", stateMutability: "nonpayable", inputs: [], outputs: [] },
 ] as const;
 
 export const ajoCircleEvents = [
