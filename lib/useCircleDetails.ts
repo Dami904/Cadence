@@ -1,0 +1,105 @@
+"use client";
+
+import { useMemo } from "react";
+import { zeroAddress, type Address } from "viem";
+import { useAccount, useReadContract, useReadContracts } from "wagmi";
+import { ajoCircleAbi } from "./contracts";
+
+export type MemberStatus = {
+  address: Address;
+  contributed: boolean;
+  covered: boolean;
+  isYou: boolean;
+};
+
+export function useCircleDetails(circleAddress: Address | undefined) {
+  const { address } = useAccount();
+  const circle = circleAddress ?? zeroAddress;
+  const enabled = Boolean(circleAddress);
+
+  const { data: coreResults, isLoading: isLoadingCore, refetch: refetchCore } = useReadContracts({
+    contracts: [
+      { address: circle, abi: ajoCircleAbi, functionName: "status" },
+      { address: circle, abi: ajoCircleAbi, functionName: "currentRound" },
+      { address: circle, abi: ajoCircleAbi, functionName: "currentRoundDeadline" },
+      { address: circle, abi: ajoCircleAbi, functionName: "currentRoundFunding" },
+      { address: circle, abi: ajoCircleAbi, functionName: "contributionAmount" },
+      { address: circle, abi: ajoCircleAbi, functionName: "targetMemberCount" },
+      { address: circle, abi: ajoCircleAbi, functionName: "getMembers" },
+      { address: circle, abi: ajoCircleAbi, functionName: "asset" },
+    ],
+    query: { enabled },
+  });
+
+  const [statusR, roundR, deadlineR, fundingR, contribR, targetR, membersR, assetR] = coreResults ?? [];
+
+  const status = statusR?.status === "success" ? Number(statusR.result) : undefined;
+  const currentRound = roundR?.status === "success" ? (roundR.result as bigint) : undefined;
+  const currentRoundDeadline = deadlineR?.status === "success" ? (deadlineR.result as bigint) : undefined;
+  const currentRoundFunding = fundingR?.status === "success" ? (fundingR.result as bigint) : undefined;
+  const contributionAmount = contribR?.status === "success" ? (contribR.result as bigint) : undefined;
+  const targetMemberCount = targetR?.status === "success" ? (targetR.result as bigint) : undefined;
+  const members = membersR?.status === "success" ? (membersR.result as Address[]) : undefined;
+  const asset = assetR?.status === "success" ? (assetR.result as Address) : undefined;
+
+  const recipientIndex = currentRound !== undefined && currentRound > 0n ? Number(currentRound) - 1 : undefined;
+  const recipient = members && recipientIndex !== undefined ? members[recipientIndex] : undefined;
+
+  const { data: memberStatusResults, isLoading: isLoadingMemberStatus, refetch: refetchMemberStatus } = useReadContracts({
+    contracts: (members ?? []).flatMap((member) =>
+      currentRound !== undefined
+        ? [
+            { address: circle, abi: ajoCircleAbi, functionName: "contributed", args: [currentRound, member] as const },
+            { address: circle, abi: ajoCircleAbi, functionName: "defaultCovered", args: [currentRound, member] as const },
+          ]
+        : [],
+    ),
+    query: { enabled: Boolean(members?.length) && currentRound !== undefined },
+  });
+
+  const memberStatuses: MemberStatus[] = useMemo(() => {
+    if (!members || currentRound === undefined) return [];
+    return members.map((member, index) => {
+      const contributedResult = memberStatusResults?.[index * 2];
+      const coveredResult = memberStatusResults?.[index * 2 + 1];
+      return {
+        address: member,
+        contributed: contributedResult?.status === "success" ? Boolean(contributedResult.result) : false,
+        covered: coveredResult?.status === "success" ? Boolean(coveredResult.result) : false,
+        isYou: address ? member.toLowerCase() === address.toLowerCase() : false,
+      };
+    });
+  }, [members, currentRound, memberStatusResults, address]);
+
+  const { data: amIMember } = useReadContract({
+    address: circle,
+    abi: ajoCircleAbi,
+    functionName: "isMember",
+    args: [address ?? zeroAddress],
+    query: { enabled: enabled && Boolean(address) },
+  });
+
+  const myStatus = memberStatuses.find((member) => member.isYou);
+
+  const refetch = () => {
+    refetchCore();
+    refetchMemberStatus();
+  };
+
+  return {
+    isLoading: isLoadingCore || isLoadingMemberStatus,
+    refetch,
+    status,
+    currentRound,
+    currentRoundDeadline,
+    currentRoundFunding,
+    contributionAmount,
+    targetMemberCount,
+    members,
+    memberStatuses,
+    recipient,
+    asset,
+    amIMember: Boolean(amIMember),
+    hasContributedThisRound: Boolean(myStatus?.contributed),
+  };
+}

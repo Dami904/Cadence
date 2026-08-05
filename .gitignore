@@ -1,0 +1,8 @@
+.env
+.env.local
+!.env.example
+artifacts/
+cache/
+typechain-types/
+.next/
+node_modules/

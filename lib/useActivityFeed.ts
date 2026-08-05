@@ -1,0 +1,100 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import type { Address } from "viem";
+import { useAccount, usePublicClient } from "wagmi";
+import { ajoCircleEvents } from "./contracts";
+import { useCadenceCircles } from "./useCadenceCircles";
+
+export type ActivityEntry = {
+  key: string;
+  kind: "Contribution" | "Default covered" | "Payout" | "Circle completed" | "Member joined";
+  title: string;
+  copy: string;
+  timestamp: number;
+  hash: `0x${string}`;
+  isYou: boolean;
+};
+
+const LOOKBACK_BLOCKS = 200_000n;
+
+function shortAddress(address: string) {
+  return address.slice(0, 6) + "…" + address.slice(-4);
+}
+
+export function useActivityFeed() {
+  const publicClient = usePublicClient();
+  const { address } = useAccount();
+  const { myCircles, isLoading: isLoadingCircles } = useCadenceCircles();
+  const [entries, setEntries] = useState<ActivityEntry[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+
+  useEffect(() => {
+    if (isLoadingCircles) return;
+    if (!publicClient || myCircles.length === 0) {
+      setEntries([]);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingLogs(true);
+
+    (async () => {
+      const latest = await publicClient.getBlockNumber();
+      const fromBlock = latest > LOOKBACK_BLOCKS ? latest - LOOKBACK_BLOCKS : 0n;
+
+      const perCircleLogs = await Promise.all(
+        myCircles.map((circle) =>
+          publicClient.getLogs({
+            address: circle.address as Address,
+            events: ajoCircleEvents,
+            fromBlock,
+            toBlock: latest,
+          }),
+        ),
+      );
+
+      const logs = perCircleLogs.flat();
+      const blockNumbers = Array.from(new Set(logs.map((log) => log.blockNumber).filter((b): b is bigint => b !== null)));
+      const blocks = await Promise.all(blockNumbers.map((blockNumber) => publicClient.getBlock({ blockNumber })));
+      const timestampByBlock = new Map(blocks.map((block) => [block.number, Number(block.timestamp)]));
+
+      const mapped: ActivityEntry[] = logs.map((log) => {
+        const timestamp = log.blockNumber ? (timestampByBlock.get(log.blockNumber) ?? 0) : 0;
+        const key = `${log.transactionHash}-${log.logIndex}`;
+        const hash = log.transactionHash as `0x${string}`;
+        const actor = (log.args as { member?: string; recipient?: string }).member ?? (log.args as { recipient?: string }).recipient;
+        const isYou = Boolean(address && actor && actor.toLowerCase() === address.toLowerCase());
+
+        if (log.eventName === "ContributionMade") {
+          return { key, hash, timestamp, isYou, kind: "Contribution", title: "Contribution made", copy: `Round ${log.args.round} · ${shortAddress(log.args.member as string)}` };
+        }
+        if (log.eventName === "DefaultCovered") {
+          return { key, hash, timestamp, isYou, kind: "Default covered", title: "Deposit covered a missed contribution", copy: `Round ${log.args.round} · ${shortAddress(log.args.member as string)}` };
+        }
+        if (log.eventName === "PayoutExecuted") {
+          return { key, hash, timestamp, isYou, kind: "Payout", title: "Payout executed", copy: `Round ${log.args.round} to ${shortAddress(log.args.recipient as string)}` };
+        }
+        if (log.eventName === "CircleCompleted") {
+          return { key, hash, timestamp, isYou: false, kind: "Circle completed", title: "Circle completed", copy: `Final round ${log.args.finalRound}` };
+        }
+        return { key, hash, timestamp, isYou, kind: "Member joined", title: "Member joined", copy: `${shortAddress(log.args.member as string)} joined the circle` };
+      });
+
+      mapped.sort((a, b) => b.timestamp - a.timestamp);
+
+      if (!cancelled) {
+        setEntries(mapped.slice(0, 30));
+        setIsLoadingLogs(false);
+      }
+    })().catch(() => {
+      if (!cancelled) setIsLoadingLogs(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [publicClient, myCircles, isLoadingCircles]);
+
+  return { entries, isLoading: isLoadingCircles || isLoadingLogs };
+}
