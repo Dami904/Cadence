@@ -1,7 +1,7 @@
 "use client";
 
 import { AppShell } from "../../components/AppShell";
-import { ArrowUpRight, Check, CircleDollarSign, LockKeyhole, ShieldCheck, UsersRound } from "lucide-react";
+import { ArrowUpRight, Check, CircleDollarSign, HeartHandshake, LockKeyhole, LogOut, ShieldCheck, UsersRound } from "lucide-react";
 import { useActivityFeed, type ActivityEntry } from "../../lib/useActivityFeed";
 
 // Only these two AjoCircle functions are gated onlyKeeper (see contracts/AjoCircle.sol),
@@ -19,6 +19,10 @@ const kindIcon: Record<ActivityEntry["kind"], typeof Check> = {
   "Payout": CircleDollarSign,
   "Circle completed": Check,
   "Member joined": UsersRound,
+  "Member left": LogOut,
+  "Deposit replenished": ShieldCheck,
+  "Deposit covered": HeartHandshake,
+  "Deposit returned": CircleDollarSign,
 };
 
 const kindTone: Record<ActivityEntry["kind"], string> = {
@@ -27,6 +31,10 @@ const kindTone: Record<ActivityEntry["kind"], string> = {
   "Payout": "yellow",
   "Circle completed": "violet",
   "Member joined": "violet",
+  "Member left": "coral",
+  "Deposit replenished": "teal",
+  "Deposit covered": "violet",
+  "Deposit returned": "teal",
 };
 
 function formatTime(timestamp: number) {

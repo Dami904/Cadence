@@ -6,8 +6,31 @@
 - Circle USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
 - ERC-8004 Identity Registry: `0x8004A818BFB912233c491871b3d84c89A494BD9e`
 - ERC-8004 Reputation Registry: `0x8004B663056A597Dffe9eCcC1965A193B7388713`
+- Keeper Authorization: `0x37D7fe84C4154Ec4A59d0750a654e97d787A572d`
+- Trust Score Registry: `0xfAd996eF67d5531cCcA3Ca3822c4e09fA034f86D`
+- Circle Factory: `0x994c1bA542aB312bF65AB06D48D657E9F97888b8` (redeployed 2026-08-10, deploy block `45311262` — see below)
 
 The local `.env` is intentionally ignored. It contains the deployer private key and must never be committed, copied into client-side variables, or shared.
+
+### 2026-08-10 — `CircleFactory` redeployed to fix fund-lock bugs
+
+`AjoCircle.sol` had no way for members to reclaim their deposit under two
+conditions: a circle that never fills, and a member who defaults twice in a
+row (deposit drawn to zero, then nothing left to draw — `checkAndCoverDefault`
+and every `executePayout` after it would revert forever). Deposits also never
+returned to anyone even on a circle that completed successfully — nothing in
+the contract ever paid `securityDepositBalance` back out except a draw on
+default. Fixed by adding `leave()` (reclaim your deposit while still
+`Forming`), `coverDeposit(member)` (any member can top up a stuck member's
+deposit from their own wallet — a community rescue, not a single admin
+override), and returning every remaining deposit to its owner when
+`executePayout` completes the final round. `KeeperAuthorization` and
+`TrustScoreRegistry` are untouched by this — only `CircleFactory` (and the
+`AjoCircle` bytecode it deploys) needed a fresh address, via
+`npm run contracts:compile && npx hardhat run scripts/redeploy-factory.ts
+--network baseSepolia`. **Circles created on the old factory
+(`0x28cc4Ca5277e4364Db0cc38a93AB672A23fa9c9D`) are no longer discoverable by
+the frontend** — it only scans from the new factory's deploy block onward.
 
 ## Required before deployment
 

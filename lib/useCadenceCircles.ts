@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Address } from "viem";
 import { useAccount, usePublicClient, useReadContracts } from "wagmi";
 import { getLogsChunked } from "./chainLogs";
-import { ajoCircleEvents, cadenceContracts, circleFactoryAbi } from "./contracts";
+import { ajoCircleAbi, ajoCircleEvents, cadenceContracts, circleFactoryAbi } from "./contracts";
 
 export type CircleSummary = {
   address: Address;
@@ -58,8 +58,9 @@ export function useCadenceCircles() {
       }
 
       // One chunked query across every circle address (viem supports an address array
-      // here) filtered to this wallet's MemberJoined events finds exactly which circles
-      // it's in — no per-circle isMember() call needed.
+      // here) filtered to this wallet's MemberJoined events narrows down to circles it has
+      // ever joined. This is only a candidate list, not ground truth — a member can leave()
+      // while a circle is still Forming, so live isMember() reads below confirm the rest.
       const joinedLogs = await getLogsChunked<{ address: Address }>(publicClient, {
         address: allCircleAddresses,
         event: memberJoinedEvent,
@@ -86,30 +87,34 @@ export function useCadenceCircles() {
   }, [configured, publicClient, address]);
 
   const { data: recordResults, isLoading: isLoadingRecords } = useReadContracts({
-    contracts: myCircleAddresses.map((circle) => ({
-      address: cadenceContracts.circleFactory,
-      abi: circleFactoryAbi,
-      functionName: "getCircle",
-      args: [circle] as const,
-    })),
-    query: { enabled: myCircleAddresses.length > 0 },
+    contracts: myCircleAddresses.flatMap((circle) => [
+      { address: cadenceContracts.circleFactory, abi: circleFactoryAbi, functionName: "getCircle", args: [circle] as const },
+      { address: circle, abi: ajoCircleAbi, functionName: "isMember", args: [address ?? "0x0000000000000000000000000000000000000000"] as const },
+    ]),
+    query: { enabled: myCircleAddresses.length > 0 && Boolean(address) },
   });
 
   const myCircles: CircleSummary[] = useMemo(
     () =>
-      myCircleAddresses.map((circleAddress, index) => {
-        const record = recordResults?.[index];
-        const recordValue =
-          record?.status === "success"
-            ? (record.result as unknown as { circle: Address; targetMemberCount: bigint; status: number })
-            : null;
-        return {
-          address: circleAddress,
-          targetMemberCount: recordValue?.targetMemberCount ?? 0n,
-          status: recordValue?.status ?? 0,
-          isMember: true,
-        };
-      }),
+      myCircleAddresses
+        .map((circleAddress, index) => {
+          const record = recordResults?.[index * 2];
+          const isMemberResult = recordResults?.[index * 2 + 1];
+          const recordValue =
+            record?.status === "success"
+              ? (record.result as unknown as { circle: Address; targetMemberCount: bigint; status: number })
+              : null;
+          const stillMember = isMemberResult?.status === "success" ? Boolean(isMemberResult.result) : false;
+          return {
+            address: circleAddress,
+            targetMemberCount: recordValue?.targetMemberCount ?? 0n,
+            status: recordValue?.status ?? 0,
+            isMember: stillMember,
+          };
+        })
+        // A circle you left while it was Forming still shows up in the join-event
+        // candidate list above; the live isMember() read is what actually excludes it.
+        .filter((circle) => circle.isMember),
     [myCircleAddresses, recordResults],
   );
 

@@ -34,12 +34,15 @@ contract AjoCircle {
     mapping(uint256 => mapping(address => bool)) public defaultCovered;
 
     event MemberJoined(address indexed member, uint256 indexed position, uint256 depositPosted);
+    event MemberLeft(address indexed member, uint256 depositReturned);
     event CircleStarted(uint256 indexed firstRound, uint256 deadline);
     event ContributionMade(uint256 indexed round, address indexed member, uint256 amount);
     event DefaultCovered(uint256 indexed round, address indexed member, uint256 amount);
     event PayoutExecuted(uint256 indexed round, address indexed recipient, uint256 amount);
     event CircleCompleted(uint256 indexed finalRound);
     event DepositReplenished(address indexed member, uint256 amount);
+    event DepositCovered(address indexed payer, address indexed member, uint256 amount);
+    event DepositReturned(address indexed member, uint256 amount);
 
     error InvalidConfiguration();
     error InvalidStatus();
@@ -53,6 +56,7 @@ contract AjoCircle {
     error DefaultAlreadyCovered();
     error FundingIncomplete();
     error DepositInsufficient();
+    error NothingToCover();
 
     constructor(
         address asset_,
@@ -105,6 +109,19 @@ contract AjoCircle {
         emit MemberJoined(msg.sender, members.length, depositAmount);
     }
 
+    /// @notice Exit and reclaim your deposit while the circle is still filling. No lock-in
+    /// before rotation order is even set — once `start()` locks it, this is no longer available.
+    function leave() external onlyMember {
+        if (status != Status.Forming) revert InvalidStatus();
+
+        isMember[msg.sender] = false;
+        uint256 refund = securityDepositBalance[msg.sender];
+        securityDepositBalance[msg.sender] = 0;
+        _removeMember(msg.sender);
+        asset.safeTransfer(msg.sender, refund);
+        emit MemberLeft(msg.sender, refund);
+    }
+
     /// @notice Anyone may start a full circle. This does not create an admin role.
     function start() external {
         if (status != Status.Forming || members.length != targetMemberCount) revert InvalidStatus();
@@ -126,13 +143,26 @@ contract AjoCircle {
         emit ContributionMade(currentRound, msg.sender, contributionAmount);
     }
 
-    /// @notice Allows a member to restore their one-round protection after it was used.
+    /// @notice Allows a member to restore their own one-round protection after it was used.
     function replenishDeposit() external onlyMember {
         uint256 missing = depositAmount - securityDepositBalance[msg.sender];
-        if (missing == 0) revert InvalidConfiguration();
+        if (missing == 0) revert NothingToCover();
         securityDepositBalance[msg.sender] = depositAmount;
         asset.safeTransferFrom(msg.sender, address(this), missing);
         emit DepositReplenished(msg.sender, missing);
+    }
+
+    /// @notice Lets any member cover a fellow member's depleted deposit, funded from the
+    /// payer's own wallet. Exists so one member missing two rounds in a row (deposit drawn to
+    /// zero, then defaulting again with nothing left to draw) doesn't permanently stall every
+    /// other member's payouts — without granting any single address unilateral override power.
+    function coverDeposit(address member) external onlyMember {
+        if (!isMember[member]) revert MemberOnly();
+        uint256 missing = depositAmount - securityDepositBalance[member];
+        if (missing == 0) revert NothingToCover();
+        securityDepositBalance[member] = depositAmount;
+        asset.safeTransferFrom(msg.sender, address(this), missing);
+        emit DepositCovered(msg.sender, member, missing);
     }
 
     function checkAndCoverDefault(uint256 round, address member) external onlyKeeper {
@@ -162,12 +192,38 @@ contract AjoCircle {
         if (round == targetMemberCount) {
             status = Status.Completed;
             factory.onCircleStatusChanged(uint8(status));
+            _returnAllDeposits();
             emit CircleCompleted(round);
             return;
         }
 
         currentRound = round + 1;
         currentRoundDeadline += roundDuration;
+    }
+
+    function _removeMember(address member) private {
+        uint256 len = members.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (members[i] == member) {
+                members[i] = members[len - 1];
+                members.pop();
+                return;
+            }
+        }
+    }
+
+    /// @notice Every member's remaining deposit is only ever needed to protect rounds still to
+    /// come — once the final payout ships there are none left, so it goes back to its owner.
+    function _returnAllDeposits() private {
+        uint256 len = members.length;
+        for (uint256 i = 0; i < len; i++) {
+            address member = members[i];
+            uint256 balance = securityDepositBalance[member];
+            if (balance == 0) continue;
+            securityDepositBalance[member] = 0;
+            asset.safeTransfer(member, balance);
+            emit DepositReturned(member, balance);
+        }
     }
 
     function getMembers() external view returns (address[] memory) {

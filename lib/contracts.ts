@@ -110,9 +110,11 @@ export const ajoCircleAbi = [
     outputs: [{ name: "", type: "uint256" }],
   },
   { type: "function", name: "join", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { type: "function", name: "leave", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "contribute", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "start", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "replenishDeposit", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { type: "function", name: "coverDeposit", stateMutability: "nonpayable", inputs: [{ name: "member", type: "address" }], outputs: [] },
 ] as const;
 
 export const ajoCircleEvents = [
@@ -161,6 +163,43 @@ export const ajoCircleEvents = [
     name: "CircleCompleted",
     anonymous: false,
     inputs: [{ name: "finalRound", type: "uint256", indexed: true }],
+  },
+  {
+    type: "event",
+    name: "MemberLeft",
+    anonymous: false,
+    inputs: [
+      { name: "member", type: "address", indexed: true },
+      { name: "depositReturned", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "DepositReplenished",
+    anonymous: false,
+    inputs: [
+      { name: "member", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "DepositCovered",
+    anonymous: false,
+    inputs: [
+      { name: "payer", type: "address", indexed: true },
+      { name: "member", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "DepositReturned",
+    anonymous: false,
+    inputs: [
+      { name: "member", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+    ],
   },
 ] as const;
 

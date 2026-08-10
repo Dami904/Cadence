@@ -199,9 +199,10 @@ function JoinPageContent() {
         <aside className="join-aside">
           <div className="eyebrow"><ShieldCheck size={13} /> WHAT YOU&apos;RE JOINING</div>
           <h2>A circle built on a shared promise.</h2>
-          <p>Every member contributes on the same rhythm. Each gets the full pot once, in an order agreed before the circle begins.</p>
+          <p>Every member contributes on the same rhythm. Each gets the full pot once, in the order members joined — locked the moment the circle starts.</p>
           <div><Check size={17} /><span>Your money goes directly into the circle contract</span></div>
           <div><Check size={17} /><span>Missed payments are protected by a security deposit</span></div>
+          <div><Check size={17} /><span>You can leave and reclaim your deposit anytime before the circle starts</span></div>
           <div><Check size={17} /><span>Every payout is an inspectable onchain action</span></div>
         </aside>
       </div>

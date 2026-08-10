@@ -42,7 +42,7 @@ function statusLabel(status: number | undefined) {
 export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
   const { address: myAddress, isConnected } = useAccount();
   const details = useCircleDetails(circleAddress);
-  const [pendingAction, setPendingAction] = useState<"approve" | "contribute" | "start" | "replenish" | null>(null);
+  const [pendingAction, setPendingAction] = useState<"approve" | "contribute" | "start" | "replenish" | "leave" | "cover" | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const { data: txHash, error: writeError, isPending, writeContract } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
@@ -77,7 +77,7 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
   useEffect(() => {
     if (!isSuccess || !pendingAction) return;
     if (pendingAction === "approve") refetchAllowance();
-    if (pendingAction === "contribute" || pendingAction === "start" || pendingAction === "replenish") refetch();
+    if (pendingAction === "contribute" || pendingAction === "start" || pendingAction === "replenish" || pendingAction === "leave" || pendingAction === "cover") refetch();
     setPendingAction(null);
   }, [isSuccess, pendingAction, refetchAllowance, refetch]);
 
@@ -148,6 +148,25 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
     writeContract({ address: circleAddress, abi: ajoCircleAbi, functionName: "replenishDeposit" });
   };
 
+  const leaveCircle = () => {
+    if (!isConnected || status !== CircleStatus.Forming) return;
+    setPendingAction("leave");
+    writeContract({ address: circleAddress, abi: ajoCircleAbi, functionName: "leave" });
+  };
+
+  const stalledMissing = stalledOn && depositAmount !== undefined ? depositAmount - stalledOn.depositBalance : 0n;
+
+  const coverStalledMember = () => {
+    if (!isConnected || !asset || !stalledOn || stalledMissing <= 0n) return;
+    if ((allowance ?? 0n) < stalledMissing) {
+      setPendingAction("approve");
+      writeContract({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, stalledMissing] });
+      return;
+    }
+    setPendingAction("cover");
+    writeContract({ address: circleAddress, abi: ajoCircleAbi, functionName: "coverDeposit", args: [stalledOn.address] });
+  };
+
   return (
     <>
       <div className="intro-row">
@@ -163,12 +182,22 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
           <ShieldAlert size={19} />
           <div>
             <b>Round stalled — waiting on {shortAddress(stalledOn.address)}{stalledOn.isYou ? " (you)" : ""}.</b>
-            <p>Their security deposit can&apos;t cover this round&apos;s contribution, so the payout can&apos;t execute yet. No one else can move this forward.</p>
+            <p>
+              {stalledOn.isYou
+                ? "Your security deposit can't cover this round's contribution, so the payout can't execute yet."
+                : "Their security deposit can't cover this round's contribution. Anyone in the circle can cover it for them to keep the round moving."}
+            </p>
           </div>
-          {stalledOn.isYou && (
+          {stalledOn.isYou ? (
             <button className="outline-button" onClick={replenishDeposit} disabled={contributeLoading} type="button">
               {contributeLoading ? "Working…" : "Top up now"}
             </button>
+          ) : (
+            amIMember && (
+              <button className="outline-button" onClick={coverStalledMember} disabled={contributeLoading} type="button">
+                {contributeLoading ? "Working…" : (allowance ?? 0n) < stalledMissing ? "Approve & cover" : "Cover their deposit"}
+              </button>
+            )
           )}
         </section>
       )}
@@ -188,9 +217,16 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
             <>
               <h3>Waiting for members to join.</h3>
               <p>{memberStatuses.length} of {String(targetMemberCount)} members have joined. Anyone can start the circle once it&apos;s full.</p>
-              <button className="outline-button" onClick={copyInviteLink} type="button">
-                {linkCopied ? <><Check size={15} /> Copied</> : <><Copy size={15} /> Copy invite link</>}
-              </button>
+              <div className="button-row-inline">
+                <button className="outline-button" onClick={copyInviteLink} type="button">
+                  {linkCopied ? <><Check size={15} /> Copied</> : <><Copy size={15} /> Copy invite link</>}
+                </button>
+                {amIMember && (
+                  <button className="text-button" onClick={leaveCircle} disabled={contributeLoading} type="button">
+                    {contributeLoading ? "Working…" : "Leave & reclaim deposit"}
+                  </button>
+                )}
+              </div>
             </>
           )}
           {writeError && <p className="form-error dashboard-error">{writeError.message}</p>}

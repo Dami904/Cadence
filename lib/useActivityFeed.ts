@@ -9,7 +9,7 @@ import { useCadenceCircles } from "./useCadenceCircles";
 
 export type ActivityEntry = {
   key: string;
-  kind: "Contribution" | "Default covered" | "Payout" | "Circle completed" | "Member joined";
+  kind: "Contribution" | "Default covered" | "Payout" | "Circle completed" | "Member joined" | "Member left" | "Deposit replenished" | "Deposit covered" | "Deposit returned";
   title: string;
   copy: string;
   timestamp: number;
@@ -26,7 +26,16 @@ type CircleLog = {
   transactionHash: `0x${string}`;
   logIndex: number;
   address: Address;
-  eventName: "MemberJoined" | "ContributionMade" | "DefaultCovered" | "PayoutExecuted" | "CircleCompleted";
+  eventName:
+    | "MemberJoined"
+    | "MemberLeft"
+    | "ContributionMade"
+    | "DefaultCovered"
+    | "PayoutExecuted"
+    | "CircleCompleted"
+    | "DepositReplenished"
+    | "DepositCovered"
+    | "DepositReturned";
   args: Record<string, unknown>;
 };
 
@@ -67,7 +76,7 @@ export function useActivityFeed() {
         const timestamp = log.blockNumber ? (timestampByBlock.get(log.blockNumber) ?? 0) : 0;
         const key = `${log.transactionHash}-${log.logIndex}`;
         const hash = log.transactionHash as `0x${string}`;
-        const actor = (log.args as { member?: string; recipient?: string }).member ?? (log.args as { recipient?: string }).recipient;
+        const actor = (log.args as { member?: string; recipient?: string; payer?: string }).member ?? (log.args as { recipient?: string }).recipient;
         const isYou = Boolean(address && actor && actor.toLowerCase() === address.toLowerCase());
 
         if (log.eventName === "ContributionMade") {
@@ -81,6 +90,21 @@ export function useActivityFeed() {
         }
         if (log.eventName === "CircleCompleted") {
           return { key, hash, timestamp, isYou: false, kind: "Circle completed", title: "Circle completed", copy: `Final round ${log.args.finalRound}` };
+        }
+        if (log.eventName === "MemberLeft") {
+          return { key, hash, timestamp, isYou, kind: "Member left", title: "Member left while forming", copy: `${shortAddress(log.args.member as string)} reclaimed their deposit and left` };
+        }
+        if (log.eventName === "DepositReplenished") {
+          return { key, hash, timestamp, isYou, kind: "Deposit replenished", title: "Deposit topped up", copy: `${shortAddress(log.args.member as string)} restored their security deposit` };
+        }
+        if (log.eventName === "DepositCovered") {
+          const payer = log.args.payer as string;
+          const member = log.args.member as string;
+          const isYouPayer = Boolean(address && payer.toLowerCase() === address.toLowerCase());
+          return { key, hash, timestamp, isYou: isYouPayer, kind: "Deposit covered", title: "Member covered another's deposit", copy: `${shortAddress(payer)} covered ${shortAddress(member)}'s deposit` };
+        }
+        if (log.eventName === "DepositReturned") {
+          return { key, hash, timestamp, isYou, kind: "Deposit returned", title: "Deposit returned", copy: `${shortAddress(log.args.member as string)}'s deposit was returned on completion` };
         }
         return { key, hash, timestamp, isYou, kind: "Member joined", title: "Member joined", copy: `${shortAddress(log.args.member as string)} joined the circle` };
       });
