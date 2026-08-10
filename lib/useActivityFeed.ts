@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Address } from "viem";
 import { useAccount, usePublicClient } from "wagmi";
-import { ajoCircleEvents } from "./contracts";
+import { getLogsChunked } from "./chainLogs";
+import { ajoCircleEvents, cadenceContracts } from "./contracts";
 import { useCadenceCircles } from "./useCadenceCircles";
 
 export type ActivityEntry = {
@@ -16,11 +17,18 @@ export type ActivityEntry = {
   isYou: boolean;
 };
 
-const LOOKBACK_BLOCKS = 200_000n;
-
 function shortAddress(address: string) {
   return address.slice(0, 6) + "…" + address.slice(-4);
 }
+
+type CircleLog = {
+  blockNumber: bigint | null;
+  transactionHash: `0x${string}`;
+  logIndex: number;
+  address: Address;
+  eventName: "MemberJoined" | "ContributionMade" | "DefaultCovered" | "PayoutExecuted" | "CircleCompleted";
+  args: Record<string, unknown>;
+};
 
 export function useActivityFeed() {
   const publicClient = usePublicClient();
@@ -41,20 +49,16 @@ export function useActivityFeed() {
 
     (async () => {
       const latest = await publicClient.getBlockNumber();
-      const fromBlock = latest > LOOKBACK_BLOCKS ? latest - LOOKBACK_BLOCKS : 0n;
+      const fromBlock = cadenceContracts.factoryDeployBlock;
 
-      const perCircleLogs = await Promise.all(
-        myCircles.map((circle) =>
-          publicClient.getLogs({
-            address: circle.address as Address,
-            events: ajoCircleEvents,
-            fromBlock,
-            toBlock: latest,
-          }),
-        ),
-      );
-
-      const logs = perCircleLogs.flat();
+      // One chunked, provider-safe query across every circle this wallet belongs to,
+      // instead of a single unbounded 200k-block request per circle.
+      const logs = await getLogsChunked<CircleLog>(publicClient, {
+        address: myCircles.map((circle) => circle.address as Address),
+        events: ajoCircleEvents,
+        fromBlock,
+        toBlock: latest,
+      });
       const blockNumbers = Array.from(new Set(logs.map((log) => log.blockNumber).filter((b): b is bigint => b !== null)));
       const blocks = await Promise.all(blockNumbers.map((blockNumber) => publicClient.getBlock({ blockNumber })));
       const timestampByBlock = new Map(blocks.map((block) => [block.number, Number(block.timestamp)]));

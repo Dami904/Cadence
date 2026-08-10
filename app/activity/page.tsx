@@ -4,6 +4,15 @@ import { AppShell } from "../../components/AppShell";
 import { ArrowUpRight, Check, CircleDollarSign, LockKeyhole, ShieldCheck, UsersRound } from "lucide-react";
 import { useActivityFeed, type ActivityEntry } from "../../lib/useActivityFeed";
 
+// Only these two AjoCircle functions are gated onlyKeeper (see contracts/AjoCircle.sol),
+// so only these event kinds were provably executed by the authorized KeeperHub wallet —
+// contributions and joins are member-initiated and get no workflow attribution.
+const workflowFor: Partial<Record<ActivityEntry["kind"], string>> = {
+  "Payout": "Cadence Payout Execution",
+  "Circle completed": "Cadence Payout Execution",
+  "Default covered": "Cadence Default Detection + Deposit Draw",
+};
+
 const kindIcon: Record<ActivityEntry["kind"], typeof Check> = {
   "Contribution": Check,
   "Default covered": ShieldCheck,
@@ -91,6 +100,7 @@ export default function ActivityPage() {
 function ActivityItem({ entry }: { entry: ActivityEntry }) {
   const Icon = kindIcon[entry.kind];
   const tone = kindTone[entry.kind];
+  const workflow = workflowFor[entry.kind];
   return (
     <article className="activity-item">
       <div className={`activity-icon ${tone}`}><Icon size={18} /></div>
@@ -98,6 +108,7 @@ function ActivityItem({ entry }: { entry: ActivityEntry }) {
         <span>{entry.kind}{entry.isYou ? " · You" : ""}</span>
         <h3>{entry.title}</h3>
         <p>{entry.copy}</p>
+        {workflow && <span className="workflow-status"><i /> {workflow}</span>}
       </div>
       <div className="activity-meta">
         <time>{formatTime(entry.timestamp)}</time>

@@ -15,6 +15,7 @@ import {
   HandCoins,
   LockKeyhole,
   MoreHorizontal,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Zap,
@@ -61,6 +62,7 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
     amIMember,
     mySecurityDeposit,
     hasContributedThisRound,
+    stalledOn,
     refetch,
   } = details;
 
@@ -156,6 +158,21 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
         </div>
       </div>
 
+      {stalledOn && (
+        <section className="stall-banner">
+          <ShieldAlert size={19} />
+          <div>
+            <b>Round stalled — waiting on {shortAddress(stalledOn.address)}{stalledOn.isYou ? " (you)" : ""}.</b>
+            <p>Their security deposit can&apos;t cover this round&apos;s contribution, so the payout can&apos;t execute yet. No one else can move this forward.</p>
+          </div>
+          {stalledOn.isYou && (
+            <button className="outline-button" onClick={replenishDeposit} disabled={contributeLoading} type="button">
+              {contributeLoading ? "Working…" : "Top up now"}
+            </button>
+          )}
+        </section>
+      )}
+
       {status === CircleStatus.Forming ? (
         <section className="dashboard-empty">
           <div className="dashboard-empty-icon"><Sparkles size={22} /></div>
@@ -181,6 +198,7 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
       ) : (
         <>
           <section className="hero-card">
+            <div className="hero-orbit orbit-a" /><div className="hero-orbit orbit-b" />
             <div className="hero-grid">
               <div className="hero-main">
                 <div className="round-chip"><Sparkles size={15} /> ROUND {String(currentRound).padStart(2, "0")} OF {String(targetMemberCount).padStart(2, "0")}</div>

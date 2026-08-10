@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
-import { zeroAddress, type Address } from "viem";
-import { useAccount, useReadContract, useReadContracts } from "wagmi";
-import { ajoCircleAbi, cadenceContracts, circleFactoryAbi } from "./contracts";
+import { useEffect, useMemo, useState } from "react";
+import type { Address } from "viem";
+import { useAccount, usePublicClient, useReadContracts } from "wagmi";
+import { getLogsChunked } from "./chainLogs";
+import { ajoCircleEvents, cadenceContracts, circleFactoryAbi } from "./contracts";
 
 export type CircleSummary = {
   address: Address;
@@ -12,63 +13,92 @@ export type CircleSummary = {
   isMember: boolean;
 };
 
+const circleCreatedEvent = circleFactoryAbi.find((item) => item.type === "event" && item.name === "CircleCreated")!;
+const memberJoinedEvent = ajoCircleEvents.find((item) => item.name === "MemberJoined")!;
+
+// Finds "my circles" via two bounded event-log queries instead of reading every circle
+// in the factory's entire registry — this used to be an isMember() call per circle
+// system-wide, which grows with total circles created by anyone, not just this wallet.
 export function useCadenceCircles() {
   const { address } = useAccount();
+  const publicClient = usePublicClient();
   const configured = cadenceContracts.isConfigured;
 
-  const { data: circleCount, isLoading: isLoadingCount } = useReadContract({
-    address: cadenceContracts.circleFactory,
-    abi: circleFactoryAbi,
-    functionName: "circleCount",
-    query: { enabled: configured },
-  });
+  const [myCircleAddresses, setMyCircleAddresses] = useState<Address[]>([]);
+  const [isLoadingDiscovery, setIsLoadingDiscovery] = useState(false);
 
-  const count = Number(circleCount ?? 0n);
-  const indices = useMemo(() => Array.from({ length: count }, (_, index) => index), [count]);
+  useEffect(() => {
+    if (!configured || !publicClient || !address) {
+      setMyCircleAddresses([]);
+      return;
+    }
 
-  const { data: addressResults, isLoading: isLoadingAddresses } = useReadContracts({
-    contracts: indices.map((index) => ({
-      address: cadenceContracts.circleFactory,
-      abi: circleFactoryAbi,
-      functionName: "circleAt",
-      args: [BigInt(index)] as const,
-    })),
-    query: { enabled: configured && count > 0 },
-  });
+    let cancelled = false;
+    setIsLoadingDiscovery(true);
 
-  const circleAddresses = useMemo(
-    () =>
-      (addressResults ?? [])
-        .map((result) => (result.status === "success" ? (result.result as unknown as Address) : null))
-        .filter((value): value is Address => Boolean(value)),
-    [addressResults],
-  );
+    (async () => {
+      const latest = await publicClient.getBlockNumber();
+      const fromBlock = cadenceContracts.factoryDeployBlock;
+
+      // One bounded, chunked query discovers every circle the factory has ever created.
+      const createdLogs = await getLogsChunked<{ args: { circle: Address } }>(publicClient, {
+        address: cadenceContracts.circleFactory,
+        event: circleCreatedEvent,
+        fromBlock,
+        toBlock: latest,
+      });
+      const allCircleAddresses = Array.from(new Set(createdLogs.map((log) => log.args.circle)));
+
+      if (allCircleAddresses.length === 0) {
+        if (!cancelled) {
+          setMyCircleAddresses([]);
+          setIsLoadingDiscovery(false);
+        }
+        return;
+      }
+
+      // One chunked query across every circle address (viem supports an address array
+      // here) filtered to this wallet's MemberJoined events finds exactly which circles
+      // it's in — no per-circle isMember() call needed.
+      const joinedLogs = await getLogsChunked<{ address: Address }>(publicClient, {
+        address: allCircleAddresses,
+        event: memberJoinedEvent,
+        args: { member: address },
+        fromBlock,
+        toBlock: latest,
+      });
+
+      const joinedAddresses = Array.from(new Set(joinedLogs.map((log) => log.address)));
+      if (!cancelled) {
+        setMyCircleAddresses(joinedAddresses);
+        setIsLoadingDiscovery(false);
+      }
+    })().catch(() => {
+      if (!cancelled) {
+        setMyCircleAddresses([]);
+        setIsLoadingDiscovery(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [configured, publicClient, address]);
 
   const { data: recordResults, isLoading: isLoadingRecords } = useReadContracts({
-    contracts: circleAddresses.map((circle) => ({
+    contracts: myCircleAddresses.map((circle) => ({
       address: cadenceContracts.circleFactory,
       abi: circleFactoryAbi,
       functionName: "getCircle",
       args: [circle] as const,
     })),
-    query: { enabled: circleAddresses.length > 0 },
+    query: { enabled: myCircleAddresses.length > 0 },
   });
 
-  const { data: membershipResults, isLoading: isLoadingMembership } = useReadContracts({
-    contracts: circleAddresses.map((circle) => ({
-      address: circle,
-      abi: ajoCircleAbi,
-      functionName: "isMember",
-      args: [address ?? zeroAddress] as const,
-    })),
-    query: { enabled: circleAddresses.length > 0 && Boolean(address) },
-  });
-
-  const circles: CircleSummary[] = useMemo(
+  const myCircles: CircleSummary[] = useMemo(
     () =>
-      circleAddresses.map((circleAddress, index) => {
+      myCircleAddresses.map((circleAddress, index) => {
         const record = recordResults?.[index];
-        const membership = membershipResults?.[index];
         const recordValue =
           record?.status === "success"
             ? (record.result as unknown as { circle: Address; targetMemberCount: bigint; status: number })
@@ -77,16 +107,14 @@ export function useCadenceCircles() {
           address: circleAddress,
           targetMemberCount: recordValue?.targetMemberCount ?? 0n,
           status: recordValue?.status ?? 0,
-          isMember: membership?.status === "success" ? Boolean(membership.result) : false,
+          isMember: true,
         };
       }),
-    [circleAddresses, recordResults, membershipResults],
+    [myCircleAddresses, recordResults],
   );
 
-  const myCircles = useMemo(() => circles.filter((circle) => circle.isMember), [circles]);
-
   return {
-    isLoading: configured && (isLoadingCount || isLoadingAddresses || isLoadingRecords || (Boolean(address) && isLoadingMembership)),
+    isLoading: configured && Boolean(address) && (isLoadingDiscovery || (myCircleAddresses.length > 0 && isLoadingRecords)),
     myCircles,
   };
 }

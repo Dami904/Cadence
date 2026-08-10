@@ -1,11 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { zeroAddress } from "viem";
+import { zeroAddress, type Address } from "viem";
 import { useAccount, usePublicClient, useReadContract } from "wagmi";
+import { getLogsChunked } from "./chainLogs";
 import { cadenceContracts, trustScoreRegistryAbi, TRUST_SCORE_TAGS } from "./contracts";
-
-const LOOKBACK_BLOCKS = 200_000n;
 
 export type TrustOutcome = {
   key: string;
@@ -15,8 +14,20 @@ export type TrustOutcome = {
   value: bigint;
 };
 
-export function useTrustScore() {
-  const { address } = useAccount();
+type OutcomeLog = {
+  blockNumber: bigint | null;
+  transactionHash: `0x${string}`;
+  logIndex: number;
+  args: { tag: string; value: bigint };
+};
+
+const outcomeRecordedEvent = trustScoreRegistryAbi.find((item) => item.type === "event" && item.name === "OutcomeRecorded")!;
+
+// Pass an address to preview any wallet's Trust Score (e.g. a circle creator on the
+// join page); omit it to read the connected wallet's own score.
+export function useTrustScore(targetAddress?: Address) {
+  const { address: connectedAddress } = useAccount();
+  const address = targetAddress ?? connectedAddress;
   const publicClient = usePublicClient();
   const configured = cadenceContracts.trustScoreRegistry !== zeroAddress;
   const enabled = configured && Boolean(address);
@@ -51,11 +62,11 @@ export function useTrustScore() {
 
     (async () => {
       const latest = await publicClient.getBlockNumber();
-      const fromBlock = latest > LOOKBACK_BLOCKS ? latest - LOOKBACK_BLOCKS : 0n;
+      const fromBlock = cadenceContracts.factoryDeployBlock;
 
-      const logs = await publicClient.getLogs({
+      const logs = await getLogsChunked<OutcomeLog>(publicClient, {
         address: cadenceContracts.trustScoreRegistry,
-        event: trustScoreRegistryAbi.find((item) => item.type === "event" && item.name === "OutcomeRecorded")!,
+        event: outcomeRecordedEvent,
         args: { member: address },
         fromBlock,
         toBlock: latest,
@@ -67,10 +78,10 @@ export function useTrustScore() {
 
       const mapped: TrustOutcome[] = logs.map((log) => ({
         key: `${log.transactionHash}-${log.logIndex}`,
-        hash: log.transactionHash as `0x${string}`,
+        hash: log.transactionHash,
         timestamp: log.blockNumber ? (timestampByBlock.get(log.blockNumber) ?? 0) : 0,
-        tag: log.args.tag as string,
-        value: log.args.value as bigint,
+        tag: log.args.tag,
+        value: log.args.value,
       }));
 
       mapped.sort((a, b) => b.timestamp - a.timestamp);

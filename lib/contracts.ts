@@ -8,6 +8,8 @@ const usdc = configuredAddress(process.env.NEXT_PUBLIC_USDC_ADDRESS);
 const circleFactory = configuredAddress(process.env.NEXT_PUBLIC_CIRCLE_FACTORY_ADDRESS);
 const keeperAuthorization = configuredAddress(process.env.NEXT_PUBLIC_KEEPER_AUTHORIZATION_ADDRESS);
 const trustScoreRegistry = configuredAddress(process.env.NEXT_PUBLIC_TRUST_SCORE_REGISTRY_ADDRESS);
+const factoryDeployBlockEnv = process.env.NEXT_PUBLIC_FACTORY_DEPLOY_BLOCK;
+const factoryDeployBlock = factoryDeployBlockEnv && /^\d+$/.test(factoryDeployBlockEnv) ? BigInt(factoryDeployBlockEnv) : 0n;
 
 export const cadenceContracts = {
   isConfigured: usdc !== zeroAddress && circleFactory !== zeroAddress,
@@ -15,6 +17,7 @@ export const cadenceContracts = {
   circleFactory,
   keeperAuthorization,
   trustScoreRegistry,
+  factoryDeployBlock,
 } as const;
 
 export const circleFactoryAbi = [

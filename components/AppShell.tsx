@@ -8,10 +8,12 @@ import {
   History,
   Menu,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   UsersRound,
   X,
 } from "lucide-react";
+import { useDepositHealth } from "../lib/useDepositHealth";
 import { WalletIdentity } from "./WalletIdentity";
 
 const items = [
@@ -45,6 +47,7 @@ export function AppShell({ active, title, children }: { active: string; title: s
         </nav>
         <div className="sidebar-bottom">
           <Link href="/settings" onClick={() => setShowMobileNav(false)} className={`nav-item ${active === "Settings" ? "active" : ""}`}><Settings size={18} /><span>Settings</span></Link>
+          <DepositHealthBadge />
           <WalletIdentity placement="sidebar" />
           <p className="keeperhub-credit">Automation by <b>KeeperHub</b></p>
         </div>
@@ -58,5 +61,17 @@ export function AppShell({ active, title, children }: { active: string; title: s
         <div className="route-content">{children}</div>
       </div>
     </main>
+  );
+}
+
+function DepositHealthBadge() {
+  const { isLoading, hasCircles, atRiskCount } = useDepositHealth();
+  if (isLoading || !hasCircles) return null;
+
+  return (
+    <div className={`deposit-health ${atRiskCount > 0 ? "at-risk" : "covered"}`}>
+      {atRiskCount > 0 ? <ShieldAlert size={15} /> : <ShieldCheck size={15} />}
+      <span>{atRiskCount > 0 ? `${atRiskCount} deposit${atRiskCount === 1 ? "" : "s"} at risk` : "Deposits covered"}</span>
+    </div>
   );
 }

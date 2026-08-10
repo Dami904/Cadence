@@ -27,6 +27,14 @@ npm run contracts:deploy:base-sepolia
 
 Copy the printed addresses into the public `NEXT_PUBLIC_*_ADDRESS` variables in `.env`, then restart the Next.js dev server. The dashboard's onchain status changes from demo data to live reads when `NEXT_PUBLIC_CIRCLE_FACTORY_ADDRESS` is set.
 
+After deploying, also set `NEXT_PUBLIC_FACTORY_DEPLOY_BLOCK` by running:
+
+```powershell
+node scripts/find-deploy-block.mjs
+```
+
+This binary-searches for the exact block `CircleFactory` was deployed at using `CIRCLE_FACTORY_ADDRESS` and `BASE_SEPOLIA_RPC_URL` from `.env`. The frontend uses this as the lower bound for all event-log discovery (circle membership, activity feed, trust score outcomes) instead of scanning from chain genesis or relying on a rolling block-count guess. **Re-run this any time `CircleFactory` is redeployed** — see the note below.
+
 ## KeeperHub workflows
 
 Built in the "Cadence" KeeperHub project, all currently **disabled** pending review. All use the authorized `KEEPERHUB_WALLET_ADDRESS` and Base Sepolia (chain `84532`). Circles are discovered dynamically from `CircleFactory` — no workflow hardcodes a single circle address.
@@ -40,7 +48,7 @@ For every workflow: `validate_workflow` first, test manually, enable only after 
 
 ### If `CircleFactory` is ever redeployed again
 
-`CircleCreated`'s ABI (and any address baked into a workflow's `query-events`/`Event` trigger nodes) must be updated in lockstep — the event topic hash changes with the event signature, so a stale ABI silently matches zero events rather than erroring.
+`CircleCreated`'s ABI (and any address baked into a workflow's `query-events`/`Event` trigger nodes) must be updated in lockstep — the event topic hash changes with the event signature, so a stale ABI silently matches zero events rather than erroring. Also re-run `node scripts/find-deploy-block.mjs` and update `NEXT_PUBLIC_FACTORY_DEPLOY_BLOCK` — a stale deploy block means the frontend under-scans and silently misses circles created on the new factory.
 
 ## ERC-8004 behaviour
 

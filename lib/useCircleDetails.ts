@@ -3,12 +3,13 @@
 import { useMemo } from "react";
 import { zeroAddress, type Address } from "viem";
 import { useAccount, useReadContract, useReadContracts } from "wagmi";
-import { ajoCircleAbi } from "./contracts";
+import { ajoCircleAbi, CircleStatus } from "./contracts";
 
 export type MemberStatus = {
   address: Address;
   contributed: boolean;
   covered: boolean;
+  depositBalance: bigint;
   isYou: boolean;
 };
 
@@ -53,6 +54,7 @@ export function useCircleDetails(circleAddress: Address | undefined) {
         ? [
             { address: circle, abi: ajoCircleAbi, functionName: "contributed", args: [currentRound, member] as const },
             { address: circle, abi: ajoCircleAbi, functionName: "defaultCovered", args: [currentRound, member] as const },
+            { address: circle, abi: ajoCircleAbi, functionName: "securityDepositBalance", args: [member] as const },
           ]
         : [],
     ),
@@ -62,16 +64,32 @@ export function useCircleDetails(circleAddress: Address | undefined) {
   const memberStatuses: MemberStatus[] = useMemo(() => {
     if (!members || currentRound === undefined) return [];
     return members.map((member, index) => {
-      const contributedResult = memberStatusResults?.[index * 2];
-      const coveredResult = memberStatusResults?.[index * 2 + 1];
+      const contributedResult = memberStatusResults?.[index * 3];
+      const coveredResult = memberStatusResults?.[index * 3 + 1];
+      const depositResult = memberStatusResults?.[index * 3 + 2];
       return {
         address: member,
         contributed: contributedResult?.status === "success" ? Boolean(contributedResult.result) : false,
         covered: coveredResult?.status === "success" ? Boolean(coveredResult.result) : false,
+        depositBalance: depositResult?.status === "success" ? (depositResult.result as bigint) : 0n,
         isYou: address ? member.toLowerCase() === address.toLowerCase() : false,
       };
     });
   }, [members, currentRound, memberStatusResults, address]);
+
+  // A round is stalled (not just "waiting") when it's past its deadline, not fully
+  // funded, and at least one unpaid member's deposit can't cover their contribution —
+  // checkAndCoverDefault() will revert for them until they replenish, so nothing but
+  // that member's action can move the round forward.
+  const isPastDeadline = currentRoundDeadline !== undefined && Date.now() >= Number(currentRoundDeadline) * 1000;
+  const pot = contributionAmount !== undefined && targetMemberCount !== undefined ? contributionAmount * targetMemberCount : undefined;
+  const isFullyFunded = pot !== undefined && currentRoundFunding !== undefined && currentRoundFunding >= pot;
+  const stalledOn = useMemo(() => {
+    if (status !== CircleStatus.Active || !isPastDeadline || isFullyFunded || contributionAmount === undefined) return undefined;
+    return memberStatuses.find(
+      (member) => !member.contributed && !member.covered && member.depositBalance < contributionAmount,
+    );
+  }, [status, isPastDeadline, isFullyFunded, contributionAmount, memberStatuses]);
 
   const { data: amIMember } = useReadContract({
     address: circle,
@@ -114,5 +132,6 @@ export function useCircleDetails(circleAddress: Address | undefined) {
     amIMember: Boolean(amIMember),
     mySecurityDeposit: mySecurityDeposit as bigint | undefined,
     hasContributedThisRound: Boolean(myStatus?.contributed),
+    stalledOn,
   };
 }

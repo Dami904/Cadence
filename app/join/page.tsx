@@ -8,6 +8,11 @@ import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteCont
 import { ArrowRight, Check, LockKeyhole, ShieldCheck, UsersRound } from "lucide-react";
 import { AppShell } from "../../components/AppShell";
 import { ajoCircleAbi, erc20Abi } from "../../lib/contracts";
+import { useTrustScore } from "../../lib/useTrustScore";
+
+function shortAddress(value: string) {
+  return value.slice(0, 6) + "…" + value.slice(-4);
+}
 
 type PendingAction = "approve" | "join" | null;
 
@@ -46,6 +51,10 @@ function JoinPageContent() {
   const { data: memberCount } = useReadContract({
     address: circle, abi: ajoCircleAbi, functionName: "memberCount", query: { enabled: Boolean(circleAddress) },
   });
+  const { data: creator } = useReadContract({
+    address: circle, abi: ajoCircleAbi, functionName: "creator", query: { enabled: Boolean(circleAddress) },
+  });
+  const creatorTrust = useTrustScore(creator);
   const { data: alreadyMember } = useReadContract({
     address: circle, abi: ajoCircleAbi, functionName: "isMember", args: [address ?? zeroAddress],
     query: { enabled: Boolean(circleAddress && address) },
@@ -145,6 +154,24 @@ function JoinPageContent() {
                 <div><span>MEMBERS</span><b>{memberLabel}</b></div>
                 <div><span>SECURITY DEPOSIT</span><b>{depositAmount ? depositLabel + " USDC" : "Loading…"}</b></div>
               </div>
+              {creator && (
+                <div className="creator-preview">
+                  <div className="avatar avatar-teal small">{creator.slice(2, 4).toUpperCase()}</div>
+                  <div>
+                    <span>CREATED BY</span>
+                    <b>{shortAddress(creator)}</b>
+                  </div>
+                  {creatorTrust.configured && (
+                    creatorTrust.isLoading ? (
+                      <span className="creator-trust-badge muted">Loading Trust Score…</span>
+                    ) : creatorTrust.hasLinkedIdentity ? (
+                      <span className="creator-trust-badge"><ShieldCheck size={13} /> Trust Score {creatorTrust.score}/100</span>
+                    ) : (
+                      <span className="creator-trust-badge muted">No linked Trust Score identity</span>
+                    )
+                  )}
+                </div>
+              )}
               <div className="lock-callout small"><LockKeyhole size={19} /><div><b>One round is protected.</b><p>Your deposit covers a missed contribution and remains in the contract.</p></div></div>
               {!isConnected && <p className="form-error">Connect your Base Sepolia wallet to continue.</p>}
               {writeError && <p className="form-error">{writeError.message}</p>}
