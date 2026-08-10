@@ -17,7 +17,7 @@ export default function DashboardPage() {
 
   return (
     <AppShell active="Overview" title="Overview">
-      <OnchainConnection />
+      <OnchainConnection myCircleCount={myCircles.length} isLoadingMyCircles={isLoading} />
 
       {isLoading ? (
         <section className="dashboard-empty">

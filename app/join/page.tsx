@@ -63,10 +63,15 @@ function JoinPageContent() {
     address: asset ?? zeroAddress, abi: erc20Abi, functionName: "allowance", args: [address ?? zeroAddress, circle],
     query: { enabled: Boolean(circleAddress && asset && address) },
   });
+  const { data: usdcBalance } = useReadContract({
+    address: asset ?? zeroAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? zeroAddress],
+    query: { enabled: Boolean(circleAddress && asset && address) },
+  });
 
   const requiredDeposit = depositAmount ?? 0n;
   const hasApproval = (allowance ?? 0n) >= requiredDeposit;
   const depositLabel = formatUnits(requiredDeposit, 6);
+  const insufficientBalance = Boolean(address) && usdcBalance !== undefined && usdcBalance < requiredDeposit;
 
   useEffect(() => {
     if (!isSuccess || !pendingAction) return;
@@ -114,6 +119,7 @@ function JoinPageContent() {
   const circleShortAddress = circleAddress ? circleAddress.slice(0, 6) + "…" + circleAddress.slice(-4) : "";
   const joinButtonLabel = loading
     ? isPending ? "Confirm in wallet…" : "Confirming…"
+    : insufficientBalance ? "Insufficient USDC balance"
     : hasApproval ? "Join for " + depositLabel + " USDC" : "Approve " + depositLabel + " USDC";
 
   return (
@@ -174,8 +180,16 @@ function JoinPageContent() {
               )}
               <div className="lock-callout small"><LockKeyhole size={19} /><div><b>One round is protected.</b><p>Your deposit covers a missed contribution and remains in the contract.</p></div></div>
               {!isConnected && <p className="form-error">Connect your Base Sepolia wallet to continue.</p>}
+              {isConnected && insufficientBalance && (
+                <p className="form-error">You need {depositLabel} USDC in this wallet to join — get Base Sepolia test USDC from a faucet first.</p>
+              )}
               {writeError && <p className="form-error">{writeError.message}</p>}
-              <button className="solid-button wide-button" disabled={!isConnected || !asset || requiredDeposit === 0n || loading} onClick={joinCircle} type="button">
+              <button
+                className="solid-button wide-button"
+                disabled={!isConnected || !asset || requiredDeposit === 0n || loading || insufficientBalance}
+                onClick={joinCircle}
+                type="button"
+              >
                 {joinButtonLabel} <ArrowRight size={17} />
               </button>
               <span className="form-note">Approval is required once; joining posts exactly one security deposit.</span>

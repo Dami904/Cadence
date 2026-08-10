@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { parseEventLogs, parseUnits, type Address } from "viem";
 import { useAccount, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
-import { Check, Copy } from "lucide-react";
+import { ArrowRight, Check, Copy } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { cadenceContracts, circleFactoryAbi } from "@/lib/contracts";
 
@@ -29,7 +30,7 @@ export default function CreateCirclePage() {
   const [createdCircle, setCreatedCircle] = useState<Address | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const { address, isConnected } = useAccount();
-  const { data: hash, error, isPending, writeContract } = useWriteContract();
+  const { data: hash, error, isPending, writeContract, reset: resetWrite } = useWriteContract();
   const { data: receipt, isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
   const cadenceSeconds = cadence === "weekly" ? 7 * 24 * 60 * 60 : 30 * 24 * 60 * 60;
@@ -78,11 +79,24 @@ export default function CreateCirclePage() {
     if (createdEvent?.args.circle) setCreatedCircle(createdEvent.args.circle);
   }, [receipt]);
 
-  const copyInviteLink = () => {
-    if (!createdCircle) return;
-    navigator.clipboard.writeText(`${window.location.origin}/join?address=${createdCircle}`);
-    setLinkCopied(true);
-    setTimeout(() => setLinkCopied(false), 1600);
+  const resetForAnotherCircle = () => {
+    setCreatedCircle(null);
+    resetWrite();
+    setCurrentStep(1);
+  };
+
+  const inviteLink = createdCircle && typeof window !== "undefined" ? `${window.location.origin}/join?address=${createdCircle}` : "";
+
+  const copyInviteLink = async () => {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 1600);
+    } catch {
+      // Clipboard API can fail silently (permissions, insecure context); the
+      // link is also shown in a selectable field so it can be copied by hand.
+    }
   };
 
   return (
@@ -175,27 +189,39 @@ export default function CreateCirclePage() {
               {error && <p className="form-error">{error.message}</p>}
               {isSuccess && (
                 <div className="form-success">
-                  <p>Circle deployed. Your wallet can now approve USDC and join it.</p>
+                  <p>Circle deployed. You&apos;re not a member yet — join it yourself, or share the invite link.</p>
                   {createdCircle && (
                     <>
                       <p>Circle address: <code>{createdCircle}</code></p>
-                      <button className="button button-quiet" onClick={copyInviteLink} type="button">
-                        {linkCopied ? <><Check size={15} /> Copied</> : <><Copy size={15} /> Copy invite link</>}
-                      </button>
+                      <div className="invite-link-row">
+                        <input readOnly value={inviteLink} onFocus={(event) => event.target.select()} />
+                        <button className="button button-quiet" onClick={copyInviteLink} type="button">
+                          {linkCopied ? <><Check size={15} /> Copied</> : <><Copy size={15} /> Copy</>}
+                        </button>
+                      </div>
+                      <Link href={`/join?address=${createdCircle}`} className="button button-primary wide-button">
+                        Join this circle <ArrowRight size={15} />
+                      </Link>
                     </>
                   )}
                 </div>
               )}
               <div className="button-row">
-                <button className="button button-quiet" onClick={() => setCurrentStep(2)} type="button">Back</button>
-                <button
-                  className="button button-primary"
-                  disabled={!cadenceContracts.isConfigured || !isConnected || Boolean(configurationError) || isPending || isConfirming}
-                  onClick={createCircle}
-                  type="button"
-                >
-                  {isPending ? "Confirm in wallet…" : isConfirming ? "Deploying…" : "Deploy circle"}
-                </button>
+                {isSuccess ? (
+                  <button className="button button-quiet" onClick={resetForAnotherCircle} type="button">Create another circle</button>
+                ) : (
+                  <>
+                    <button className="button button-quiet" onClick={() => setCurrentStep(2)} type="button">Back</button>
+                    <button
+                      className="button button-primary"
+                      disabled={!cadenceContracts.isConfigured || !isConnected || Boolean(configurationError) || isPending || isConfirming}
+                      onClick={createCircle}
+                      type="button"
+                    >
+                      {isPending ? "Confirm in wallet…" : isConfirming ? "Deploying…" : "Deploy circle"}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           )}
