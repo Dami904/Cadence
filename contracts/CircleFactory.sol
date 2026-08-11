@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {ERC2771Context} from "@openzeppelin/contracts/metatx/ERC2771Context.sol";
 import {AjoCircle} from "./AjoCircle.sol";
 
 /// @notice Deploys circles and exposes discovery metadata only.
 /// @dev It never reads contribution, deposit, default, or payout state.
-contract CircleFactory {
+contract CircleFactory is ERC2771Context {
     struct CircleRecord {
         address circle;
         uint256 targetMemberCount;
@@ -22,7 +23,7 @@ contract CircleFactory {
 
     error CircleOnly();
 
-    constructor(address keeperAuthorization_) {
+    constructor(address keeperAuthorization_, address trustedForwarder_) ERC2771Context(trustedForwarder_) {
         keeperAuthorization = keeperAuthorization_;
     }
 
@@ -34,23 +35,25 @@ contract CircleFactory {
         uint256 roundDuration,
         uint256 firstRoundDeadline
     ) external returns (address circle) {
+        address creator = _msgSender();
         circle = address(
             new AjoCircle(
                 asset,
                 keeperAuthorization,
                 address(this),
-                msg.sender,
+                creator,
                 contributionAmount,
                 depositAmount,
                 targetMemberCount,
                 roundDuration,
-                firstRoundDeadline
+                firstRoundDeadline,
+                trustedForwarder()
             )
         );
         circles.push(circle);
         isCircle[circle] = true;
         records[circle] = CircleRecord({circle: circle, targetMemberCount: targetMemberCount, status: 0});
-        emit CircleCreated(circle, targetMemberCount, asset, msg.sender);
+        emit CircleCreated(circle, targetMemberCount, asset, creator);
     }
 
     function onCircleStatusChanged(uint8 status) external {

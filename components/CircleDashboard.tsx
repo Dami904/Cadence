@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatUnits, zeroAddress, type Address } from "viem";
-import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { useAccount, useReadContract } from "wagmi";
 import {
   ArrowRight,
   Check,
@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { ajoCircleAbi, CircleStatus, erc20Abi } from "../lib/contracts";
 import { useCircleDetails } from "../lib/useCircleDetails";
+import { useSponsoredWrite } from "../lib/useSponsoredWrite";
 
 const AVATAR_COLORS = ["teal", "peach", "violet", "blue", "yellow"] as const;
 
@@ -44,8 +45,7 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
   const details = useCircleDetails(circleAddress);
   const [pendingAction, setPendingAction] = useState<"approve" | "contribute" | "start" | "replenish" | "leave" | "cover" | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
-  const { data: txHash, error: writeError, isPending, writeContract } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
+  const { write, error: writeError, isPending, isConfirming, isSuccess, notice } = useSponsoredWrite();
 
   const {
     isLoading,
@@ -124,34 +124,34 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
     if (!isConnected || !asset || status !== CircleStatus.Active) return;
     if (!hasAllowance) {
       setPendingAction("approve");
-      writeContract({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, contributionAmount] });
+      write({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, contributionAmount] });
       return;
     }
     setPendingAction("contribute");
-    writeContract({ address: circleAddress, abi: ajoCircleAbi, functionName: "contribute" });
+    write({ address: circleAddress, abi: ajoCircleAbi, functionName: "contribute" });
   };
 
   const startCircle = () => {
     if (!isConnected || status !== CircleStatus.Forming || !isFull) return;
     setPendingAction("start");
-    writeContract({ address: circleAddress, abi: ajoCircleAbi, functionName: "start" });
+    write({ address: circleAddress, abi: ajoCircleAbi, functionName: "start" });
   };
 
   const replenishDeposit = () => {
     if (!isConnected || !asset || depositShortfall <= 0n) return;
     if ((allowance ?? 0n) < depositShortfall) {
       setPendingAction("approve");
-      writeContract({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, depositShortfall] });
+      write({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, depositShortfall] });
       return;
     }
     setPendingAction("replenish");
-    writeContract({ address: circleAddress, abi: ajoCircleAbi, functionName: "replenishDeposit" });
+    write({ address: circleAddress, abi: ajoCircleAbi, functionName: "replenishDeposit" });
   };
 
   const leaveCircle = () => {
     if (!isConnected || status !== CircleStatus.Forming) return;
     setPendingAction("leave");
-    writeContract({ address: circleAddress, abi: ajoCircleAbi, functionName: "leave" });
+    write({ address: circleAddress, abi: ajoCircleAbi, functionName: "leave" });
   };
 
   const stalledMissing = stalledOn && depositAmount !== undefined ? depositAmount - stalledOn.depositBalance : 0n;
@@ -160,11 +160,11 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
     if (!isConnected || !asset || !stalledOn || stalledMissing <= 0n) return;
     if ((allowance ?? 0n) < stalledMissing) {
       setPendingAction("approve");
-      writeContract({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, stalledMissing] });
+      write({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, stalledMissing] });
       return;
     }
     setPendingAction("cover");
-    writeContract({ address: circleAddress, abi: ajoCircleAbi, functionName: "coverDeposit", args: [stalledOn.address] });
+    write({ address: circleAddress, abi: ajoCircleAbi, functionName: "coverDeposit", args: [stalledOn.address] });
   };
 
   return (
@@ -230,6 +230,7 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
             </>
           )}
           {writeError && <p className="form-error dashboard-error">{writeError.message}</p>}
+          {notice && <p className="form-note sponsor-notice">{notice}</p>}
         </section>
       ) : (
         <>
@@ -265,6 +266,7 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
               )}
             </div>
             {writeError && <p className="form-error dashboard-error">{writeError.message}</p>}
+          {notice && <p className="form-note sponsor-notice">{notice}</p>}
           </section>
 
           <div className="stats-grid">

@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { parseEventLogs, parseUnits, type Address } from "viem";
-import { useAccount, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { useAccount } from "wagmi";
 import { ArrowRight, Check, Copy } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { cadenceContracts, circleFactoryAbi } from "@/lib/contracts";
+import { useSponsoredWrite } from "@/lib/useSponsoredWrite";
 
 const steps = ["Circle basics", "Contribution terms", "Review & deploy"];
 
@@ -30,8 +31,7 @@ export default function CreateCirclePage() {
   const [createdCircle, setCreatedCircle] = useState<Address | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const { address, isConnected } = useAccount();
-  const { data: hash, error, isPending, writeContract, reset: resetWrite } = useWriteContract();
-  const { data: receipt, isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { write, logs, error, isPending, isConfirming, isSuccess, reset: resetWrite, notice } = useSponsoredWrite();
 
   const cadenceSeconds = cadence === "weekly" ? 7 * 24 * 60 * 60 : 30 * 24 * 60 * 60;
   const payoutTimestamp = useMemo(
@@ -54,7 +54,7 @@ export default function CreateCirclePage() {
   const createCircle = () => {
     if (!isConnected || !address || !cadenceContracts.isConfigured || configurationError) return;
 
-    writeContract({
+    write({
       address: cadenceContracts.circleFactory,
       abi: circleFactoryAbi,
       functionName: "createCircle",
@@ -70,14 +70,14 @@ export default function CreateCirclePage() {
   };
 
   useEffect(() => {
-    if (!receipt) return;
+    if (!logs) return;
     const createdEvent = parseEventLogs({
       abi: circleFactoryAbi,
       eventName: "CircleCreated",
-      logs: receipt.logs,
+      logs,
     })[0];
     if (createdEvent?.args.circle) setCreatedCircle(createdEvent.args.circle);
-  }, [receipt]);
+  }, [logs]);
 
   const resetForAnotherCircle = () => {
     setCreatedCircle(null);
@@ -187,6 +187,7 @@ export default function CreateCirclePage() {
               {!isConnected && <p className="form-error">Connect the Base Sepolia wallet that will create the circle.</p>}
               {configurationError && <p className="form-error">{configurationError}</p>}
               {error && <p className="form-error">{error.message}</p>}
+              {notice && <p className="form-note sponsor-notice">{notice}</p>}
               {isSuccess && (
                 <div className="form-success">
                   <p>Circle deployed. You&apos;re not a member yet — join it yourself, or share the invite link.</p>

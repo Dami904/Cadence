@@ -3,11 +3,16 @@ pragma solidity ^0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ERC2771Context} from "@openzeppelin/contracts/metatx/ERC2771Context.sol";
 import {IKeeperAuthorization} from "./interfaces/IKeeperAuthorization.sol";
 import {ICircleFactoryRegistry} from "./interfaces/ICircleFactoryRegistry.sol";
 
 /// @notice One immutable rotating-savings circle. The member order is join order and locks at start.
-contract AjoCircle {
+/// @dev ERC2771Context lets a trusted relayer submit member actions on a signer's behalf so gas
+/// isn't a blocker for wallets that aren't sponsored by a smart-account paymaster. checkAndCoverDefault
+/// and executePayout deliberately keep raw msg.sender (via onlyKeeper) — relayed calls can never pass
+/// as an authorized keeper, since the forwarder itself is never granted keeper status.
+contract AjoCircle is ERC2771Context {
     using SafeERC20 for IERC20;
 
     enum Status { Forming, Active, Completed }
@@ -67,8 +72,9 @@ contract AjoCircle {
         uint256 depositAmount_,
         uint256 targetMemberCount_,
         uint256 roundDuration_,
-        uint256 firstRoundDeadline_
-    ) {
+        uint256 firstRoundDeadline_,
+        address trustedForwarder_
+    ) ERC2771Context(trustedForwarder_) {
         if (
             asset_ == address(0) || keeperAuthorization_ == address(0) || factory_ == address(0) || creator_ == address(0) || contributionAmount_ == 0 ||
             depositAmount_ < contributionAmount_ || targetMemberCount_ < 2 || roundDuration_ == 0 ||
@@ -88,7 +94,7 @@ contract AjoCircle {
     }
 
     modifier onlyMember() {
-        if (!isMember[msg.sender]) revert MemberOnly();
+        if (!isMember[_msgSender()]) revert MemberOnly();
         _;
     }
 
@@ -98,28 +104,30 @@ contract AjoCircle {
     }
 
     function join() external {
+        address member = _msgSender();
         if (status != Status.Forming) revert InvalidStatus();
-        if (isMember[msg.sender]) revert AlreadyMember();
+        if (isMember[member]) revert AlreadyMember();
         if (members.length == targetMemberCount) revert CircleFull();
 
-        isMember[msg.sender] = true;
-        members.push(msg.sender);
-        securityDepositBalance[msg.sender] = depositAmount;
-        asset.safeTransferFrom(msg.sender, address(this), depositAmount);
-        emit MemberJoined(msg.sender, members.length, depositAmount);
+        isMember[member] = true;
+        members.push(member);
+        securityDepositBalance[member] = depositAmount;
+        asset.safeTransferFrom(member, address(this), depositAmount);
+        emit MemberJoined(member, members.length, depositAmount);
     }
 
     /// @notice Exit and reclaim your deposit while the circle is still filling. No lock-in
     /// before rotation order is even set — once `start()` locks it, this is no longer available.
     function leave() external onlyMember {
+        address member = _msgSender();
         if (status != Status.Forming) revert InvalidStatus();
 
-        isMember[msg.sender] = false;
-        uint256 refund = securityDepositBalance[msg.sender];
-        securityDepositBalance[msg.sender] = 0;
-        _removeMember(msg.sender);
-        asset.safeTransfer(msg.sender, refund);
-        emit MemberLeft(msg.sender, refund);
+        isMember[member] = false;
+        uint256 refund = securityDepositBalance[member];
+        securityDepositBalance[member] = 0;
+        _removeMember(member);
+        asset.safeTransfer(member, refund);
+        emit MemberLeft(member, refund);
     }
 
     /// @notice Anyone may start a full circle. This does not create an admin role.
@@ -133,23 +141,25 @@ contract AjoCircle {
     }
 
     function contribute() external onlyMember {
+        address member = _msgSender();
         if (status != Status.Active) revert InvalidStatus();
         if (block.timestamp >= currentRoundDeadline) revert ContributionWindowClosed();
-        if (contributed[currentRound][msg.sender]) revert AlreadyContributed();
+        if (contributed[currentRound][member]) revert AlreadyContributed();
 
-        contributed[currentRound][msg.sender] = true;
+        contributed[currentRound][member] = true;
         currentRoundFunding += contributionAmount;
-        asset.safeTransferFrom(msg.sender, address(this), contributionAmount);
-        emit ContributionMade(currentRound, msg.sender, contributionAmount);
+        asset.safeTransferFrom(member, address(this), contributionAmount);
+        emit ContributionMade(currentRound, member, contributionAmount);
     }
 
     /// @notice Allows a member to restore their own one-round protection after it was used.
     function replenishDeposit() external onlyMember {
-        uint256 missing = depositAmount - securityDepositBalance[msg.sender];
+        address member = _msgSender();
+        uint256 missing = depositAmount - securityDepositBalance[member];
         if (missing == 0) revert NothingToCover();
-        securityDepositBalance[msg.sender] = depositAmount;
-        asset.safeTransferFrom(msg.sender, address(this), missing);
-        emit DepositReplenished(msg.sender, missing);
+        securityDepositBalance[member] = depositAmount;
+        asset.safeTransferFrom(member, address(this), missing);
+        emit DepositReplenished(member, missing);
     }
 
     /// @notice Lets any member cover a fellow member's depleted deposit, funded from the
@@ -157,12 +167,13 @@ contract AjoCircle {
     /// zero, then defaulting again with nothing left to draw) doesn't permanently stall every
     /// other member's payouts — without granting any single address unilateral override power.
     function coverDeposit(address member) external onlyMember {
+        address payer = _msgSender();
         if (!isMember[member]) revert MemberOnly();
         uint256 missing = depositAmount - securityDepositBalance[member];
         if (missing == 0) revert NothingToCover();
         securityDepositBalance[member] = depositAmount;
-        asset.safeTransferFrom(msg.sender, address(this), missing);
-        emit DepositCovered(msg.sender, member, missing);
+        asset.safeTransferFrom(payer, address(this), missing);
+        emit DepositCovered(payer, member, missing);
     }
 
     function checkAndCoverDefault(uint256 round, address member) external onlyKeeper {

@@ -8,11 +8,15 @@ async function main() {
     throw new Error("Set KEEPER_AUTHORIZATION_ADDRESS before redeploying CircleFactory.");
   }
 
-  const circleFactory = await ethers.deployContract("CircleFactory", [keeperAuthorization]);
+  const forwarder = await ethers.deployContract("CadenceForwarder");
+  await forwarder.waitForDeployment();
+
+  const circleFactory = await ethers.deployContract("CircleFactory", [keeperAuthorization, await forwarder.getAddress()]);
   await circleFactory.waitForDeployment();
 
   console.table({
     keeperAuthorization,
+    forwarder: await forwarder.getAddress(),
     circleFactory: await circleFactory.getAddress(),
   });
 }

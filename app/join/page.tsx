@@ -4,10 +4,11 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { formatUnits, isAddress, zeroAddress, type Address } from "viem";
-import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { useAccount, useReadContract } from "wagmi";
 import { ArrowRight, Check, LockKeyhole, ShieldCheck, UsersRound } from "lucide-react";
 import { AppShell } from "../../components/AppShell";
 import { ajoCircleAbi, erc20Abi } from "../../lib/contracts";
+import { useSponsoredWrite } from "../../lib/useSponsoredWrite";
 import { useTrustScore } from "../../lib/useTrustScore";
 
 function shortAddress(value: string) {
@@ -32,8 +33,7 @@ function JoinPageContent() {
   const [joined, setJoined] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const { address, isConnected } = useAccount();
-  const { data: txHash, error: writeError, isPending, writeContract } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
+  const { write, isPending, isConfirming, isSuccess, error: writeError, notice } = useSponsoredWrite();
   const circle = circleAddress ?? zeroAddress;
 
   const { data: asset, error: circleError } = useReadContract({
@@ -103,11 +103,11 @@ function JoinPageContent() {
     if (!isConnected || !address || !circleAddress || !asset || requiredDeposit === 0n) return;
     if (!hasApproval) {
       setPendingAction("approve");
-      writeContract({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, requiredDeposit] });
+      write({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, requiredDeposit] });
       return;
     }
     setPendingAction("join");
-    writeContract({ address: circleAddress, abi: ajoCircleAbi, functionName: "join" });
+    write({ address: circleAddress, abi: ajoCircleAbi, functionName: "join" });
   };
 
   const loading = isPending || isConfirming;
@@ -192,6 +192,7 @@ function JoinPageContent() {
               >
                 {joinButtonLabel} <ArrowRight size={17} />
               </button>
+              {notice && <span className="form-note sponsor-notice">{notice}</span>}
               <span className="form-note">Approval is required once; joining posts exactly one security deposit.</span>
             </>
           )}

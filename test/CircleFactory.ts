@@ -8,7 +8,7 @@ describe("CircleFactory", function () {
     const [owner, memberTwo, memberThree] = await ethers.getSigners();
     const token = await ethers.deployContract("MockUSDC");
     const authorization = await ethers.deployContract("KeeperAuthorization", [owner.address]);
-    const factory = await ethers.deployContract("CircleFactory", [await authorization.getAddress()]);
+    const factory = await ethers.deployContract("CircleFactory", [await authorization.getAddress(), ethers.ZeroAddress]);
     const contribution = 500_000_000n;
     const deadline = (await time.latest()) + 3_600;
     return { owner, memberTwo, memberThree, token, authorization, factory, contribution, deadline };

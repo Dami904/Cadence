@@ -16,3 +16,17 @@ await sql`ALTER TABLE member_emails ALTER COLUMN email DROP NOT NULL`;
 await sql`ALTER TABLE member_emails ADD COLUMN IF NOT EXISTS email_reminders_enabled BOOLEAN NOT NULL DEFAULT true`;
 
 console.log("member_emails table ready");
+
+// Tracks every relayed (gas-sponsored) meta-transaction so /api/relay can rate-limit per wallet
+// without trusting anything client-supplied — the relayer wallet pays real gas per request.
+await sql`
+  CREATE TABLE IF NOT EXISTS relay_requests (
+    id BIGSERIAL PRIMARY KEY,
+    wallet_address TEXT NOT NULL,
+    tx_hash TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )
+`;
+await sql`CREATE INDEX IF NOT EXISTS relay_requests_wallet_time_idx ON relay_requests (wallet_address, created_at)`;
+
+console.log("relay_requests table ready");

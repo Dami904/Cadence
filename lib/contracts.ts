@@ -8,6 +8,7 @@ const usdc = configuredAddress(process.env.NEXT_PUBLIC_USDC_ADDRESS);
 const circleFactory = configuredAddress(process.env.NEXT_PUBLIC_CIRCLE_FACTORY_ADDRESS);
 const keeperAuthorization = configuredAddress(process.env.NEXT_PUBLIC_KEEPER_AUTHORIZATION_ADDRESS);
 const trustScoreRegistry = configuredAddress(process.env.NEXT_PUBLIC_TRUST_SCORE_REGISTRY_ADDRESS);
+const forwarder = configuredAddress(process.env.NEXT_PUBLIC_CADENCE_FORWARDER_ADDRESS);
 const factoryDeployBlockEnv = process.env.NEXT_PUBLIC_FACTORY_DEPLOY_BLOCK;
 const factoryDeployBlock = factoryDeployBlockEnv && /^\d+$/.test(factoryDeployBlockEnv) ? BigInt(factoryDeployBlockEnv) : 0n;
 
@@ -17,12 +18,14 @@ export const cadenceContracts = {
   circleFactory,
   keeperAuthorization,
   trustScoreRegistry,
+  forwarder,
   factoryDeployBlock,
 } as const;
 
 export const circleFactoryAbi = [
   { type: "function", name: "circleCount", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
   { type: "function", name: "circleAt", stateMutability: "view", inputs: [{ name: "index", type: "uint256" }], outputs: [{ name: "", type: "address" }] },
+  { type: "function", name: "isCircle", stateMutability: "view", inputs: [{ name: "", type: "address" }], outputs: [{ name: "", type: "bool" }] },
   {
     type: "function",
     name: "getCircle",
@@ -260,3 +263,54 @@ export const erc20Abi = [
     outputs: [{ name: "", type: "uint256" }],
   },
 ] as const;
+
+// CadenceForwarder is a stock OpenZeppelin ERC2771Forwarder — only the pieces the frontend and
+// relay backend actually call are declared here, not the full contract.
+export const forwarderAbi = [
+  { type: "function", name: "nonces", stateMutability: "view", inputs: [{ name: "owner", type: "address" }], outputs: [{ name: "", type: "uint256" }] },
+  {
+    type: "function",
+    name: "verify",
+    stateMutability: "view",
+    inputs: [
+      {
+        name: "request",
+        type: "tuple",
+        components: [
+          { name: "from", type: "address" },
+          { name: "to", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "gas", type: "uint256" },
+          { name: "deadline", type: "uint48" },
+          { name: "data", type: "bytes" },
+          { name: "signature", type: "bytes" },
+        ],
+      },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "execute",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "request",
+        type: "tuple",
+        components: [
+          { name: "from", type: "address" },
+          { name: "to", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "gas", type: "uint256" },
+          { name: "deadline", type: "uint48" },
+          { name: "data", type: "bytes" },
+          { name: "signature", type: "bytes" },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+] as const;
+
+export const FORWARDER_EIP712_DOMAIN_NAME = "Cadence";
+export const FORWARDER_EIP712_DOMAIN_VERSION = "1";

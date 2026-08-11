@@ -9,7 +9,7 @@ describe("AjoCircle", function () {
     const token = await ethers.deployContract("MockUSDC");
     const authorization = await ethers.deployContract("KeeperAuthorization", [owner.address]);
     await authorization.setKeeper(keeper.address, true);
-    const factory = await ethers.deployContract("CircleFactory", [await authorization.getAddress()]);
+    const factory = await ethers.deployContract("CircleFactory", [await authorization.getAddress(), ethers.ZeroAddress]);
     const contribution = 500_000_000n;
     const deadline = (await time.latest()) + 3_600;
     await factory.createCircle(
