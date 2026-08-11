@@ -2,18 +2,9 @@
 
 import { useCallback, useState } from "react";
 import { encodeFunctionData, type Address } from "viem";
-import {
-  useAccount,
-  usePublicClient,
-  useSendCalls,
-  useCallsStatus,
-  useSignTypedData,
-  useWaitForTransactionReceipt,
-  useWriteContract,
-} from "wagmi";
+import { useAccount, usePublicClient, useSignTypedData, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { cadenceContracts, forwarderAbi, FORWARDER_EIP712_DOMAIN_NAME, FORWARDER_EIP712_DOMAIN_VERSION } from "./contracts";
 
-const CDP_CONNECTOR_ID = "cdp-embedded-wallet";
 const RELAY_GAS_LIMIT = 300_000n;
 
 type WriteCall = {
@@ -23,25 +14,12 @@ type WriteCall = {
   args?: readonly unknown[];
 };
 
-// Every member action goes through here so it's gas-free wherever that's actually possible:
-// a CDP smart account gets its calls sponsored by the Coinbase Paymaster (useSendCalls), and any
-// other wallet gets its calls relayed through CadenceForwarder (sign a message, pay nothing) —
-// falling back to a normal self-paid transaction only if sponsorship isn't available right now.
+// Every member action goes through here so it's gas-free wherever possible: sign a meta-transaction
+// and it's relayed through CadenceForwarder at no cost to the wallet, falling back to a normal
+// self-paid transaction only if sponsorship isn't available right now.
 export function useSponsoredWrite() {
-  const { address, connector, chainId } = useAccount();
+  const { address, chainId } = useAccount();
   const publicClient = usePublicClient();
-
-  const isCdpConnected = connector?.id === CDP_CONNECTOR_ID;
-
-  const { sendCallsAsync } = useSendCalls();
-  const [callsId, setCallsId] = useState<string | undefined>();
-  const { data: callsStatus } = useCallsStatus({
-    id: callsId ?? "",
-    query: {
-      enabled: Boolean(callsId),
-      refetchInterval: (query) => (query.state.data?.status === "pending" ? 1000 : false),
-    },
-  });
 
   const { signTypedDataAsync } = useSignTypedData();
   const { writeContractAsync } = useWriteContract();
@@ -56,7 +34,6 @@ export function useSponsoredWrite() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const reset = useCallback(() => {
-    setCallsId(undefined);
     setFallbackHash(undefined);
     setRelayHash(undefined);
     setError(null);
@@ -76,16 +53,6 @@ export function useSponsoredWrite() {
       reset();
       setIsPending(true);
       try {
-        if (isCdpConnected) {
-          const data = encodeFunctionData({ abi: call.abi, functionName: call.functionName, args: call.args ?? [] });
-          const { id } = await sendCallsAsync({
-            calls: [{ to: call.address, data }],
-            capabilities: { paymasterService: { url: `${window.location.origin}/api/paymaster` } },
-          });
-          setCallsId(id);
-          return;
-        }
-
         if (!address || !publicClient || chainId === undefined) throw new Error("Wallet not connected");
         if (cadenceContracts.forwarder === "0x0000000000000000000000000000000000000000") {
           await payOwnGas(call);
@@ -143,18 +110,13 @@ export function useSponsoredWrite() {
         setIsPending(false);
       }
     },
-    [reset, isCdpConnected, address, publicClient, chainId, sendCallsAsync, signTypedDataAsync, payOwnGas],
+    [reset, address, publicClient, chainId, signTypedDataAsync, payOwnGas],
   );
 
-  const isConfirming = Boolean(callsId) ? callsStatus?.status === "pending" : isConfirmingRelay || isConfirmingFallback;
-  const isSuccess = callsStatus?.status === "success" || isSuccessRelay || isSuccessFallback;
-  const callsFailed = callsStatus?.status === "failure";
+  const isConfirming = isConfirmingRelay || isConfirmingFallback;
+  const isSuccess = isSuccessRelay || isSuccessFallback;
 
-  // Deliberately loose: a sponsored batch call's receipt (EIP-5792) carries a reduced log shape
-  // (address/data/topics only, no blockNumber/transactionHash) compared to a plain transaction
-  // receipt's full viem Log — both are enough to decode an event's args, which is all callers need.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const logs: any[] | undefined = callsStatus?.receipts?.[0]?.logs ?? relayReceipt?.logs ?? fallbackReceipt?.logs;
+  const logs = relayReceipt?.logs ?? fallbackReceipt?.logs;
 
   return {
     write,
@@ -163,7 +125,7 @@ export function useSponsoredWrite() {
     isConfirming,
     isSuccess,
     logs,
-    error: callsFailed ? (error ?? new Error("Sponsored transaction failed")) : error,
+    error,
     notice,
   };
 }

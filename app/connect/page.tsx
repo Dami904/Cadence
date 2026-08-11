@@ -4,10 +4,8 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { SignIn } from "@coinbase/cdp-react";
 import { useAccount } from "wagmi";
-import { Check, Mail, Wallet } from "lucide-react";
-import { isCdpConfigured } from "../../lib/wagmi";
+import { Check, Wallet } from "lucide-react";
 
 export default function ConnectPage() {
   const { isConnected } = useAccount();
@@ -37,16 +35,6 @@ export default function ConnectPage() {
           <h2>Connect your wallet</h2>
           <p>Connect to create a circle, join one, or see your savings rhythm.</p>
           <div className="connect-live"><ConnectButton /></div>
-
-          {isCdpConfigured && (
-            <>
-              <div className="connect-divider"><span>or</span></div>
-              <div className="connect-email-icon"><Mail size={16} /> No wallet? Sign in with email — gas is on us.</div>
-              <div className="connect-email-signin">
-                <SignIn authMethods={["email"]} />
-              </div>
-            </>
-          )}
 
           <small>By continuing, you agree to Cadence&apos;s terms and privacy policy.</small>
         </div>
