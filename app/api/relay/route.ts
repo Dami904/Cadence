@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPublicClient, createWalletClient, http, isAddress, isHex, toFunctionSelector } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { createPublicClient, http, isAddress, isHex, toFunctionSelector } from "viem";
 import { baseSepolia } from "viem/chains";
 import { getSql } from "@/lib/db";
 import { cadenceContracts, circleFactoryAbi, forwarderAbi } from "@/lib/contracts";
 
 const RATE_LIMIT_PER_DAY = 20;
 const MAX_REQUEST_GAS = 500_000n;
+const KEEPERHUB_WAIT_TIMEOUT_MS = 30_000;
 
 // Only these calls are ever sponsored — even against a trusted target, arbitrary calldata isn't
 // forwarded. Selectors are derived from the same ABIs the frontend already uses, not hardcoded,
@@ -23,18 +23,22 @@ const SPONSORED_SELECTORS = new Set([
 
 const publicClient = createPublicClient({ chain: baseSepolia, transport: http(process.env.BASE_SEPOLIA_RPC_URL) });
 
-function getRelayerAccount() {
-  const key = process.env.RELAYER_PRIVATE_KEY;
-  if (!key) return null;
-  return privateKeyToAccount(key as `0x${string}`);
-}
+type KeeperHubTransactionHash = { hash: `0x${string}`; nodeId: string; nodeName: string };
+type KeeperHubWaitResponse = {
+  status: "success" | "error" | "cancelled";
+  completed: boolean;
+  transactionHashes: KeeperHubTransactionHash[];
+  error: string | null;
+};
 
 export async function POST(request: NextRequest) {
   if (cadenceContracts.forwarder === "0x0000000000000000000000000000000000000000") {
     return NextResponse.json({ error: "Relayer not configured" }, { status: 503 });
   }
-  const account = getRelayerAccount();
-  if (!account) {
+  const webhookUrl = process.env.KEEPERHUB_RELAY_WEBHOOK_URL;
+  const webhookKey = process.env.KH_API_KEY;
+  const orgApiKey = process.env.KH_ORG_API_KEY;
+  if (!webhookUrl || !webhookKey || !orgApiKey) {
     return NextResponse.json({ error: "Relayer not configured" }, { status: 503 });
   }
 
@@ -99,19 +103,51 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Request signature is invalid or expired" }, { status: 400 });
   }
 
-  const walletClient = createWalletClient({ account, chain: baseSepolia, transport: http(process.env.BASE_SEPOLIA_RPC_URL) });
-
-  let hash: `0x${string}`;
+  // The KeeperHub webhook trigger's own output wraps everything under a top-level "data" key, so a
+  // payload field literally named "data" collides with it and can't be read back out — sent as
+  // "calldata" instead, which the workflow's nodes reference accordingly.
+  let executionId: string;
   try {
-    hash = await walletClient.writeContract({
-      address: cadenceContracts.forwarder,
-      abi: forwarderAbi,
-      functionName: "execute",
-      args: [forwardRequest],
+    const triggerResponse = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${webhookKey}` },
+      body: JSON.stringify({
+        from,
+        to,
+        value: valueBig.toString(),
+        gas: gasBig.toString(),
+        deadline: Number(deadlineBig),
+        calldata: data,
+        signature,
+      }),
     });
-  } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Relay submission failed" }, { status: 502 });
+    if (!triggerResponse.ok) {
+      return NextResponse.json({ error: "Relay submission failed" }, { status: 502 });
+    }
+    ({ executionId } = (await triggerResponse.json()) as { executionId: string });
+  } catch {
+    return NextResponse.json({ error: "Relay submission failed" }, { status: 502 });
   }
+
+  let result: KeeperHubWaitResponse;
+  try {
+    const waitResponse = await fetch(
+      `https://app.keeperhub.com/api/workflows/executions/${executionId}/wait?timeoutMs=${KEEPERHUB_WAIT_TIMEOUT_MS}`,
+      { headers: { Authorization: `Bearer ${orgApiKey}` } },
+    );
+    if (!waitResponse.ok) {
+      return NextResponse.json({ error: "Relay execution failed" }, { status: 502 });
+    }
+    result = (await waitResponse.json()) as KeeperHubWaitResponse;
+  } catch {
+    return NextResponse.json({ error: "Relay execution failed" }, { status: 502 });
+  }
+
+  if (!result.completed || result.status !== "success" || result.transactionHashes.length === 0) {
+    return NextResponse.json({ error: result.error ?? "Relay execution failed" }, { status: 502 });
+  }
+
+  const hash = result.transactionHashes[0].hash;
 
   await sql`INSERT INTO relay_requests (wallet_address, tx_hash) VALUES (${from.toLowerCase()}, ${hash})`;
 
