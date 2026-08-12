@@ -4,7 +4,7 @@
 
 Built for the [KeeperHub — Agents Onchain Hackathon](https://dorahacks.io/hackathon/agents-onchain/detail) on DoraHacks.
 
-[**Live app**](https://cadence-thrift.vercel.app) · [**Docs**](https://cadence-thrift.vercel.app/docs) · [**Proof-of-execution tx**](https://sepolia.basescan.org/tx/0x770ea56ecc368d2697af722fb601b39e2df1a7807e1bf9d17750e3e1f876f816) · [**KeeperHub bug we filed**](https://github.com/KeeperHub/keeperhub/issues/2049)
+[**Live app**](https://cadence-thrift.vercel.app) · [**Docs**](https://cadence-thrift.vercel.app/docs) · [**Proof-of-execution tx**](https://sepolia.basescan.org/tx/0x64e7e36ef11b456048cbc03f7e54c6cb955162c7db1590efe9a2c9a1568555e0) · [**KeeperHub bug we filed**](https://github.com/KeeperHub/keeperhub/issues/2049)
 
 ![Next.js](https://img.shields.io/badge/Next.js-15-000000?logo=next.js&logoColor=white)
 ![Solidity](https://img.shields.io/badge/Solidity-0.8.24-363636?logo=solidity&logoColor=white)
@@ -37,14 +37,14 @@ Built for the [KeeperHub — Agents Onchain Hackathon](https://dorahacks.io/hack
 
 This hackathon has one rule: **every project must use KeeperHub as its onchain execution layer.** Cadence takes that further than a single integration point — there is no autonomous action anywhere in this app that isn't a named KeeperHub workflow. Nine of them, covering payouts, default protection, reputation, gas sponsorship, onboarding, and monitoring. Read state, decide, and act are always separate, inspectable steps — never a black-box script.
 
-**Transaction proof** — the `Cadence New Member Gas Drip` workflow, live-tested end to end today:
+**Transaction proof** — two of the three core circle-lifecycle workflows, caught executing completely on their own against a real circle on Base Sepolia, no manual trigger involved:
 
-| | Transaction | What it did |
+| Workflow | Transaction | What it did |
 |---|---|---|
-| **First** | [`0xc571cc3f6619d0e7dd351343f7c74a3732a4cc0c0b8a1d07418bb8fba3f06f6d`](https://sepolia.basescan.org/tx/0xc571cc3f6619d0e7dd351343f7c74a3732a4cc0c0b8a1d07418bb8fba3f06f6d) | Sanity-check run — confirmed the webhook, wallet integration, and fixed-amount transfer were wired correctly. |
-| **Latest** | [`0x770ea56ecc368d2697af722fb601b39e2df1a7807e1bf9d17750e3e1f876f816`](https://sepolia.basescan.org/tx/0x770ea56ecc368d2697af722fb601b39e2df1a7807e1bf9d17750e3e1f876f816) | The real case — 0.0005 Base Sepolia ETH sent unprompted to a brand-new, freshly generated wallet the instant it "connected," with zero balance beforehand. |
+| **Cadence Payout Execution** | [`0x64e7e36ef11b456048cbc03f7e54c6cb955162c7db1590efe9a2c9a1568555e0`](https://sepolia.basescan.org/tx/0x64e7e36ef11b456048cbc03f7e54c6cb955162c7db1590efe9a2c9a1568555e0) | Detected a fully funded round past its deadline on a live circle and called `executePayout()`, paying that round's recipient. |
+| **Cadence Completion → Reputation Update** | [`0xf19d2b0c248f6dd483ef8a5f3bf2ae91d6f82020a70154e9a84d15325d8f765d`](https://sepolia.basescan.org/tx/0xf19d2b0c248f6dd483ef8a5f3bf2ae91d6f82020a70154e9a84d15325d8f765d) | Fired on the `CircleCompleted` event and wrote a member's outcome to the ERC-8004 reputation registry, with zero manual trigger. |
 
-Payout execution, the meta-transaction relay, and the event-triggered reputation update have all been live-tested with real transactions against real circles on Base Sepolia too — see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for that run history and the bug write-up below.
+The `Cadence New Member Gas Drip` workflow has also been live-tested end to end, including a real, unprompted transfer to a brand-new wallet: [`0x770ea56ecc368d2697af722fb601b39e2df1a7807e1bf9d17750e3e1f876f816`](https://sepolia.basescan.org/tx/0x770ea56ecc368d2697af722fb601b39e2df1a7807e1bf9d17750e3e1f876f816). Full run history and the bug write-up: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ---
 
