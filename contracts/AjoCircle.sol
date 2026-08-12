@@ -11,8 +11,10 @@ import {ICircleFactoryRegistry} from "./interfaces/ICircleFactoryRegistry.sol";
 /// @notice One immutable rotating-savings circle. The member order is join order and locks at start.
 /// @dev ERC2771Context lets a trusted relayer submit member actions on a signer's behalf so gas
 /// isn't a blocker for wallets that aren't sponsored by a smart-account paymaster. checkAndCoverDefault
-/// and executePayout deliberately keep raw msg.sender (via onlyKeeper) — relayed calls can never pass
-/// as an authorized keeper, since the forwarder itself is never granted keeper status.
+/// and executePayout deliberately keep raw msg.sender (via onlyKeeperOrAfterGrace) — relayed calls can
+/// never pass as an authorized keeper, since the forwarder itself is never granted keeper status. Both
+/// also become callable by anyone once KEEPER_GRACE_PERIOD elapses past the round deadline, so a
+/// stalled or revoked keeper can never block a round indefinitely.
 contract AjoCircle is ERC2771Context, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -28,6 +30,16 @@ contract AjoCircle is ERC2771Context, ReentrancyGuard {
     uint256 public immutable roundDuration;
     uint256 public immutable firstRoundDeadline;
     uint256 public immutable formingDeadline;
+
+    /// @dev How long after a round's deadline the authorized keeper has exclusive first-mover
+    /// rights on checkAndCoverDefault/executePayout before anyone becomes able to trigger the
+    /// same, already-eligible action themselves. Disclosed, deliberate choice — one day is short
+    /// enough that a stalled or revoked keeper never blocks a round for long, and long enough that
+    /// it's not a race against the keeper's own ~2-minute schedule under normal operation. This is
+    /// what makes "not even us can interfere" true for payout *timing*, not just rotation order:
+    /// the eligibility check itself (funding complete, deadline passed) never changes — only who
+    /// is allowed to submit the call once the grace window has elapsed.
+    uint256 public constant KEEPER_GRACE_PERIOD = 1 days;
 
     Status public status;
     uint256 public currentRound;
@@ -119,6 +131,16 @@ contract AjoCircle is ERC2771Context, ReentrancyGuard {
 
     modifier onlyKeeper() {
         if (!keeperAuthorization.isKeeper(msg.sender)) revert KeeperOnly();
+        _;
+    }
+
+    /// @dev Same authorization boundary as onlyKeeper, except after `deadline + KEEPER_GRACE_PERIOD`
+    /// any caller passes too. Deliberately still checks raw msg.sender for the keeper branch, same
+    /// as onlyKeeper — a relayed meta-transaction can never pass as the keeper here either.
+    modifier onlyKeeperOrAfterGrace(uint256 deadline) {
+        if (!keeperAuthorization.isKeeper(msg.sender) && block.timestamp < deadline + KEEPER_GRACE_PERIOD) {
+            revert KeeperOnly();
+        }
         _;
     }
 
@@ -230,7 +252,7 @@ contract AjoCircle is ERC2771Context, ReentrancyGuard {
         emit DepositCovered(payer, member, missing);
     }
 
-    function checkAndCoverDefault(uint256 round, address member) external onlyKeeper {
+    function checkAndCoverDefault(uint256 round, address member) external onlyKeeperOrAfterGrace(currentRoundDeadline) {
         if (status != Status.Active || round != currentRound || !isMember[member]) revert InvalidStatus();
         if (block.timestamp < currentRoundDeadline) revert DeadlineNotReached();
         if (contributed[round][member]) return;
@@ -246,7 +268,7 @@ contract AjoCircle is ERC2771Context, ReentrancyGuard {
         emit DefaultCovered(round, member, contributionAmount);
     }
 
-    function executePayout(uint256 round) external onlyKeeper nonReentrant {
+    function executePayout(uint256 round) external onlyKeeperOrAfterGrace(currentRoundDeadline) nonReentrant {
         if (status != Status.Active || round != currentRound) revert InvalidStatus();
         if (block.timestamp < currentRoundDeadline) revert DeadlineNotReached();
         uint256 pot = contributionAmount * targetMemberCount;

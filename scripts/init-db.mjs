@@ -57,3 +57,18 @@ await sql`
 `;
 
 console.log("gas_drips table ready");
+
+// Second throttle layer for /api/gas-drip, independent of the per-wallet one-shot reservation
+// above: that reservation stops the same address from ever being paid twice, but does nothing
+// to stop one caller from generating unlimited fresh addresses. This caps how many drips a single
+// IP can trigger in a rolling window, regardless of how many distinct wallets it uses.
+await sql`
+  CREATE TABLE IF NOT EXISTS gas_drip_ip_requests (
+    id BIGSERIAL PRIMARY KEY,
+    ip_address TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )
+`;
+await sql`CREATE INDEX IF NOT EXISTS gas_drip_ip_requests_ip_time_idx ON gas_drip_ip_requests (ip_address, created_at)`;
+
+console.log("gas_drip_ip_requests table ready");

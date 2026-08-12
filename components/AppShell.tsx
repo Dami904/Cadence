@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { useAccount, useSwitchChain } from "wagmi";
 import { baseSepolia } from "wagmi/chains";
 import {
+  Compass,
   Droplets,
   Grid2X2,
   History,
@@ -23,6 +24,7 @@ import { WalletIdentity } from "./WalletIdentity";
 const items = [
   { label: "Overview", href: "/dashboard", icon: Grid2X2 },
   { label: "My circles", href: "/circles", icon: UsersRound },
+  { label: "Browse circles", href: "/browse", icon: Compass },
   { label: "Activity", href: "/activity", icon: History },
   { label: "Trust score", href: "/trust-score", icon: ShieldCheck },
   { label: "Faucet", href: "/faucet", icon: Droplets },

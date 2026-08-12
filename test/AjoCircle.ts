@@ -273,4 +273,61 @@ describe("AjoCircle", function () {
     await expect(circle.connect(owner).replenishDeposit()).to.be.revertedWithCustomError(circle, "InvalidStatus");
     await expect(circle.connect(owner).coverDeposit(memberTwo.address)).to.be.revertedWithCustomError(circle, "InvalidStatus");
   });
+
+  it("still blocks non-keepers right up until the grace period actually elapses", async function () {
+    const { owner, memberTwo, memberThree, outsider, circle, deadline } = await deployFixture();
+    await circle.start();
+    await circle.connect(memberTwo).contribute();
+    await circle.connect(memberThree).contribute();
+
+    const graceElapsesAt = deadline + Number(await circle.KEEPER_GRACE_PERIOD());
+    // Comfortably before the grace window elapses (not just one second, since mining the calls
+    // below advances the chain's timestamp by at least another second) — this is still
+    // exclusively the keeper's call.
+    await time.increaseTo(graceElapsesAt - 10);
+    await expect(circle.connect(outsider).checkAndCoverDefault(1, owner.address))
+      .to.be.revertedWithCustomError(circle, "KeeperOnly");
+    await expect(circle.connect(outsider).executePayout(1))
+      .to.be.revertedWithCustomError(circle, "KeeperOnly");
+  });
+
+  it("lets anyone — not just the keeper — cover a default and execute a payout once the grace period elapses", async function () {
+    const { owner, memberTwo, memberThree, outsider, token, circle, contribution, deadline } = await deployFixture();
+    await circle.start();
+    await circle.connect(memberTwo).contribute();
+    await circle.connect(memberThree).contribute();
+
+    const graceElapsesAt = deadline + Number(await circle.KEEPER_GRACE_PERIOD());
+    await time.increaseTo(graceElapsesAt);
+
+    // A total stranger — not a member, not the authorized keeper — can now do exactly what the
+    // keeper would have: this is the fallback that keeps a stalled or revoked keeper from being
+    // able to freeze a round forever. The eligibility rules underneath (funding state, deadline)
+    // are unchanged; only who's allowed to submit the call is different.
+    await expect(circle.connect(outsider).checkAndCoverDefault(1, owner.address))
+      .to.emit(circle, "DefaultCovered").withArgs(1, owner.address, contribution);
+    const balanceBefore = await token.balanceOf(memberTwo.address);
+    await expect(circle.connect(outsider).executePayout(1))
+      .to.emit(circle, "PayoutExecuted").withArgs(1, owner.address, contribution * 3n);
+
+    expect(await circle.currentRound()).to.equal(2n);
+    // The outsider triggered it, but the payout still went to the correct, locked recipient —
+    // this fallback changes who can submit the call, never who receives the pot.
+    expect(await token.balanceOf(memberTwo.address)).to.equal(balanceBefore);
+  });
+
+  it("still lets the authorized keeper act at any time, grace period or not", async function () {
+    const { owner, memberTwo, memberThree, keeper, circle, contribution, deadline } = await deployFixture();
+    await circle.start();
+    await circle.connect(memberTwo).contribute();
+    await circle.connect(memberThree).contribute();
+
+    // Well past the grace period too — the keeper's own authorization never expires or degrades.
+    const longAfterGrace = deadline + Number(await circle.KEEPER_GRACE_PERIOD()) * 5;
+    await time.increaseTo(longAfterGrace);
+    await expect(circle.connect(keeper).checkAndCoverDefault(1, owner.address))
+      .to.emit(circle, "DefaultCovered").withArgs(1, owner.address, contribution);
+    await expect(circle.connect(keeper).executePayout(1))
+      .to.emit(circle, "PayoutExecuted").withArgs(1, owner.address, contribution * 3n);
+  });
 });

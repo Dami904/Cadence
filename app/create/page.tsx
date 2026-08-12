@@ -12,6 +12,15 @@ import { useSponsoredWrite } from "@/lib/useSponsoredWrite";
 
 const steps = ["Circle basics", "Contribution terms", "Review & deploy"];
 
+// One-click starting points for the two fields most first-time creators don't have a strong
+// opinion on yet — members and per-round amount. Picking one only prefills the form; every value
+// stays editable afterward, and nothing here is enforced on-chain.
+const PRESETS = [
+  { label: "$20/week · 6 people", amount: "20", members: "6", cadence: "weekly" },
+  { label: "$50/month · 4 people", amount: "50", members: "4", cadence: "monthly" },
+  { label: "$10/week · 10 people", amount: "10", members: "10", cadence: "weekly" },
+] as const;
+
 function defaultFirstPayoutDate() {
   const date = new Date();
   date.setDate(date.getDate() + 7);
@@ -167,6 +176,25 @@ export default function CreateCirclePage() {
                 <p className="section-kicker">The circle</p>
                 <h2>Set the shared agreement.</h2>
                 <p className="muted">Everyone sees the same terms before joining. They cannot be changed after deployment.</p>
+              </div>
+              <div className="circle-switcher" aria-label="Starting points">
+                {PRESETS.map((preset) => {
+                  const isActive = members === preset.members && amount === preset.amount && cadence === preset.cadence;
+                  return (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      className={isActive ? "active" : ""}
+                      onClick={() => {
+                        setMembers(preset.members);
+                        setAmount(preset.amount);
+                        setCadence(preset.cadence);
+                      }}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
               </div>
               <label>
                 Circle name

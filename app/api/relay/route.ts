@@ -1,35 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPublicClient, http, isAddress, isHex, toFunctionSelector } from "viem";
+import { createPublicClient, http } from "viem";
 import { baseSepolia } from "viem/chains";
 import { getSql } from "@/lib/db";
 import { cadenceContracts, circleFactoryAbi, forwarderAbi } from "@/lib/contracts";
-
-const TRUST_SCORE_SELECTORS = new Set([
-  toFunctionSelector("linkIdentity(uint256)"),
-  toFunctionSelector("unlinkIdentity()"),
-]);
+import { isRelayValidationError, validateRelayRequest, validateTargetSelector } from "@/lib/relayValidation";
 
 const RATE_LIMIT_PER_DAY = 20;
-const MAX_REQUEST_GAS = 500_000n;
 const KEEPERHUB_WAIT_TIMEOUT_MS = 30_000;
-
-const CREATE_CIRCLE_SIGNATURE = "createCircle(address,uint256,uint256,uint256,uint256,uint256,uint256)";
-
-// Only these calls are ever sponsored — even against a trusted target, arbitrary calldata isn't
-// forwarded. Selectors are derived from the same ABIs the frontend already uses, not hardcoded,
-// so this list can't silently drift from what the contracts actually expose.
-const SPONSORED_SELECTORS = new Set([
-  toFunctionSelector(CREATE_CIRCLE_SIGNATURE),
-  toFunctionSelector("join()"),
-  toFunctionSelector("leave()"),
-  toFunctionSelector("cancelIfExpired()"),
-  toFunctionSelector("withdrawDeposit(address)"),
-  toFunctionSelector("contribute()"),
-  toFunctionSelector("start()"),
-  toFunctionSelector("replenishDeposit()"),
-  toFunctionSelector("coverDeposit(address)"),
-  ...TRUST_SCORE_SELECTORS,
-]);
 
 const publicClient = createPublicClient({ chain: baseSepolia, transport: http(process.env.BASE_SEPOLIA_RPC_URL) });
 
@@ -53,65 +30,39 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json().catch(() => null);
-  const { from, to, value, gas, deadline, data, signature } = body ?? {};
-
-  if (!isAddress(from) || !isAddress(to) || !isHex(data) || !isHex(signature)) {
-    return NextResponse.json({ error: "Malformed request" }, { status: 400 });
+  const parsed = validateRelayRequest(body ?? {});
+  if (isRelayValidationError(parsed)) {
+    return NextResponse.json({ error: parsed.error }, { status: parsed.status });
   }
-  let valueBig: bigint, gasBig: bigint, deadlineBig: bigint;
-  try {
-    valueBig = BigInt(value);
-    gasBig = BigInt(gas);
-    deadlineBig = BigInt(deadline);
-  } catch {
-    return NextResponse.json({ error: "Malformed request" }, { status: 400 });
-  }
-  if (valueBig !== 0n) {
-    return NextResponse.json({ error: "Only zero-value calls are relayed" }, { status: 400 });
-  }
-  if (gasBig <= 0n || gasBig > MAX_REQUEST_GAS) {
-    return NextResponse.json({ error: "Requested gas out of bounds" }, { status: 400 });
-  }
-  const selector = data.slice(0, 10) as `0x${string}`;
-  if (!SPONSORED_SELECTORS.has(selector)) {
-    return NextResponse.json({ error: "This action isn't eligible for gas sponsorship" }, { status: 400 });
-  }
+  const { from, to, value: valueBig, gas: gasBig, deadline: deadlineBig, data, signature, selector } = parsed;
 
   const isFactory = to.toLowerCase() === cadenceContracts.circleFactory.toLowerCase();
   const isTrustScoreRegistry = to.toLowerCase() === cadenceContracts.trustScoreRegistry.toLowerCase();
-  if (isFactory) {
-    if (selector !== toFunctionSelector(CREATE_CIRCLE_SIGNATURE)) {
-      return NextResponse.json({ error: "That action isn't valid on the factory" }, { status: 400 });
-    }
-  } else if (isTrustScoreRegistry) {
-    if (!TRUST_SCORE_SELECTORS.has(selector)) {
-      return NextResponse.json({ error: "That action isn't valid on the trust score registry" }, { status: 400 });
-    }
-  } else {
-    const isCircle = await publicClient.readContract({
-      address: cadenceContracts.circleFactory,
-      abi: circleFactoryAbi,
-      functionName: "isCircle",
-      args: [to],
-    });
-    if (!isCircle) {
-      return NextResponse.json({ error: "Target isn't a Cadence contract" }, { status: 400 });
-    }
-    if (TRUST_SCORE_SELECTORS.has(selector)) {
-      return NextResponse.json({ error: "That action isn't valid on a circle" }, { status: 400 });
-    }
+  const isCircle =
+    !isFactory && !isTrustScoreRegistry
+      ? await publicClient.readContract({ address: cadenceContracts.circleFactory, abi: circleFactoryAbi, functionName: "isCircle", args: [to] })
+      : false;
+  const targetError = validateTargetSelector({ selector, isFactory, isTrustScoreRegistry, isCircle });
+  if (targetError) {
+    return NextResponse.json({ error: targetError.error }, { status: targetError.status });
   }
 
   const sql = getSql();
-  // Reserving a slot is one atomic statement — the count-check and insert happen in the same
-  // round trip, so two concurrent requests from the same wallet can't both read a count below
-  // the limit and both insert before either commits (the gap that mattered here, since the
-  // actual relay call below can take up to 30s). tx_hash starts NULL and is filled in on success,
-  // or the reservation is deleted below if the relay never completes — a failed attempt never
-  // counted against the wallet's daily limit before, and still doesn't.
+  // Being one SQL statement closes the JS-level race, but under READ COMMITTED it doesn't close
+  // the DB-level one on its own: two truly concurrent requests for the same wallet can each take
+  // their own snapshot of `recent` before either commits, both see a count under the limit, and
+  // both insert. pg_advisory_xact_lock(hashtext(wallet)) fixes that — it's a transaction-scoped
+  // lock keyed to this wallet, so a second concurrent request for the *same* wallet blocks until
+  // the first one's implicit single-statement transaction finishes, and only then reads a count
+  // that already reflects it. Different wallets hash to (almost certainly) different lock keys,
+  // so they still run fully in parallel. The `recent` CTE is joined against `lock` specifically
+  // so the planner can't evaluate the count before the lock is actually held.
   const [reservation] = (await sql`
-    WITH recent AS (
-      SELECT COUNT(*)::int AS count FROM relay_requests
+    WITH lock AS (
+      SELECT pg_advisory_xact_lock(hashtext(${from.toLowerCase()})) AS acquired
+    ),
+    recent AS (
+      SELECT COUNT(*)::int AS count FROM relay_requests, lock
       WHERE wallet_address = ${from.toLowerCase()} AND created_at > now() - interval '24 hours'
     )
     INSERT INTO relay_requests (wallet_address, tx_hash)

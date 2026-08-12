@@ -88,29 +88,39 @@ export function useSponsoredWrite() {
           message: { from: address, to: call.address, value: 0n, gas: RELAY_GAS_LIMIT, nonce, deadline: Number(deadline), data },
         });
 
-        const response = await fetch("/api/relay", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            from: address,
-            to: call.address,
-            value: "0",
-            gas: RELAY_GAS_LIMIT.toString(),
-            deadline: deadline.toString(),
-            data,
-            signature,
-          }),
-        });
+        // Everything past this point — the network call itself, and reading the response — gets
+        // its own try/catch. Only a non-OK response used to trigger the self-paid fallback; a
+        // thrown exception here (offline, DNS failure, the relay returning malformed JSON) used
+        // to fall through to the outer catch and surface as a bare error instead, leaving the
+        // member stuck even though falling back to their own wallet was still entirely possible.
+        try {
+          const response = await fetch("/api/relay", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              from: address,
+              to: call.address,
+              value: "0",
+              gas: RELAY_GAS_LIMIT.toString(),
+              deadline: deadline.toString(),
+              data,
+              signature,
+            }),
+          });
 
-        if (!response.ok) {
-          const body = await response.json().catch(() => ({}));
-          setNotice((body.error as string | undefined) ?? "Sponsored gas isn't available right now — continuing with your own wallet.");
+          if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            setNotice((body.error as string | undefined) ?? "Sponsored gas isn't available right now — continuing with your own wallet.");
+            await payOwnGas(call);
+            return;
+          }
+
+          const { hash } = (await response.json()) as { hash: `0x${string}` };
+          setRelayHash(hash);
+        } catch {
+          setNotice("Sponsored gas isn't available right now — continuing with your own wallet.");
           await payOwnGas(call);
-          return;
         }
-
-        const { hash } = (await response.json()) as { hash: `0x${string}` };
-        setRelayHash(hash);
       } catch (err) {
         setError(err instanceof Error ? err : new Error("Transaction failed"));
       } finally {

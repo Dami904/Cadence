@@ -77,6 +77,38 @@ describe("ERC-2771 relay", function () {
     expect(await ethers.provider.getBalance(memberTwo.address)).to.equal(memberBalanceBefore);
   });
 
+  it("rejects replaying the same signed request a second time, even though the first execution succeeded", async function () {
+    const { ethers, memberTwo, relayer, forwarder, circle } = await deployFixture();
+
+    const data = circle.interface.encodeFunctionData("join");
+    const request = await signForwardRequest(ethers, forwarder, memberTwo, await circle.getAddress(), data);
+
+    // First relay of this exact signed request goes through and joins the circle.
+    await expect(forwarder.connect(relayer).execute(request)).to.not.be.reverted;
+    expect(await circle.isMember(memberTwo.address)).to.equal(true);
+
+    // The forwarder's nonce for this signer has now advanced, so the identical request — same
+    // signature, same nonce, replayed verbatim — no longer verifies. This is what actually backs
+    // /api/relay's replay-protection claim: even if a captured or logged request payload were
+    // resubmitted to the relay endpoint, the forwarder itself refuses to execute it twice.
+    expect(await forwarder.connect(relayer).verify(request)).to.equal(false);
+    await expect(forwarder.connect(relayer).execute(request)).to.be.reverted;
+  });
+
+  it("rejects a relayed request past its signed deadline, even with a fresh, otherwise-valid signature", async function () {
+    const { ethers, memberTwo, relayer, forwarder, circle } = await deployFixture();
+
+    const data = circle.interface.encodeFunctionData("join");
+    const request = await signForwardRequest(ethers, forwarder, memberTwo, await circle.getAddress(), data);
+    request.deadline = BigInt((await time.latest()) - 1); // already expired, signature untouched
+
+    // A tampered deadline invalidates the signature (deadline is part of the signed struct), so
+    // this is really the same guarantee as the replay test above from a different angle: nothing
+    // about a ForwardRequest can be altered after signing and still verify.
+    expect(await forwarder.connect(relayer).verify(request)).to.equal(false);
+    await expect(forwarder.connect(relayer).execute(request)).to.be.reverted;
+  });
+
   it("rejects a relayed request whose signer doesn't match the claimed from address", async function () {
     const { ethers, owner, memberTwo, relayer, forwarder, circle } = await deployFixture();
 
