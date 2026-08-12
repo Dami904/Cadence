@@ -41,13 +41,20 @@ export function useCadenceCircles() {
       const fromBlock = cadenceContracts.factoryDeployBlock;
 
       // One bounded, chunked query discovers every circle the factory has ever created.
-      const createdLogs = await getLogsChunked<{ args: { circle: Address } }>(publicClient, {
+      const createdLogs = await getLogsChunked<{ args: { circle: Address; creator: Address } }>(publicClient, {
         address: cadenceContracts.circleFactory,
         event: circleCreatedEvent,
         fromBlock,
         toBlock: latest,
       });
       const allCircleAddresses = Array.from(new Set(createdLogs.map((log) => log.args.circle)));
+
+      // createCircle() doesn't auto-join its own creator — join() is a separate step with its
+      // own deposit — so a circle this wallet created but hasn't joined yet would otherwise be
+      // invisible everywhere, including its own "Circle created" activity entry.
+      const createdByMeAddresses = createdLogs
+        .filter((log) => log.args.creator.toLowerCase() === address.toLowerCase())
+        .map((log) => log.args.circle);
 
       if (allCircleAddresses.length === 0) {
         if (!cancelled) {
@@ -69,9 +76,10 @@ export function useCadenceCircles() {
         toBlock: latest,
       });
 
-      const joinedAddresses = Array.from(new Set(joinedLogs.map((log) => log.address)));
+      const joinedAddresses = joinedLogs.map((log) => log.address);
+      const candidateAddresses = Array.from(new Set([...joinedAddresses, ...createdByMeAddresses]));
       if (!cancelled) {
-        setMyCircleAddresses(joinedAddresses);
+        setMyCircleAddresses(candidateAddresses);
         setIsLoadingDiscovery(false);
       }
     })().catch(() => {
@@ -94,32 +102,35 @@ export function useCadenceCircles() {
     query: { enabled: myCircleAddresses.length > 0 && Boolean(address) },
   });
 
-  const myCircles: CircleSummary[] = useMemo(
+  // Every circle this wallet has ever joined, regardless of current membership — a circle you
+  // left (or that later got cancelled/completed) still belongs here, since it's your history.
+  const allCircles: CircleSummary[] = useMemo(
     () =>
-      myCircleAddresses
-        .map((circleAddress, index) => {
-          const record = recordResults?.[index * 2];
-          const isMemberResult = recordResults?.[index * 2 + 1];
-          const recordValue =
-            record?.status === "success"
-              ? (record.result as unknown as { circle: Address; targetMemberCount: bigint; status: number })
-              : null;
-          const stillMember = isMemberResult?.status === "success" ? Boolean(isMemberResult.result) : false;
-          return {
-            address: circleAddress,
-            targetMemberCount: recordValue?.targetMemberCount ?? 0n,
-            status: recordValue?.status ?? 0,
-            isMember: stillMember,
-          };
-        })
-        // A circle you left while it was Forming still shows up in the join-event
-        // candidate list above; the live isMember() read is what actually excludes it.
-        .filter((circle) => circle.isMember),
+      myCircleAddresses.map((circleAddress, index) => {
+        const record = recordResults?.[index * 2];
+        const isMemberResult = recordResults?.[index * 2 + 1];
+        const recordValue =
+          record?.status === "success"
+            ? (record.result as unknown as { circle: Address; targetMemberCount: bigint; status: number })
+            : null;
+        const stillMember = isMemberResult?.status === "success" ? Boolean(isMemberResult.result) : false;
+        return {
+          address: circleAddress,
+          targetMemberCount: recordValue?.targetMemberCount ?? 0n,
+          status: recordValue?.status ?? 0,
+          isMember: stillMember,
+        };
+      }),
     [myCircleAddresses, recordResults],
   );
+
+  // A circle you left while it was Forming still shows up in the join-event candidate list
+  // above; the live isMember() read is what actually excludes it from "currently mine."
+  const myCircles = useMemo(() => allCircles.filter((circle) => circle.isMember), [allCircles]);
 
   return {
     isLoading: configured && Boolean(address) && (isLoadingDiscovery || (myCircleAddresses.length > 0 && isLoadingRecords)),
     myCircles,
+    allCircles,
   };
 }

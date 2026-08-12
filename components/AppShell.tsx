@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { useDepositHealth } from "../lib/useDepositHealth";
+import { useGasDripOnboarding } from "../lib/useGasDripOnboarding";
 import { WalletIdentity } from "./WalletIdentity";
 
 const items = [
@@ -63,6 +64,7 @@ export function AppShell({ active, title, children }: { active: string; title: s
           <div className="top-actions"><WalletIdentity placement="header" /></div>
         </header>
         <WrongNetworkBanner />
+        <GasDripBanner />
         <div className="route-content">{children}</div>
       </div>
     </main>
@@ -84,6 +86,23 @@ function WrongNetworkBanner() {
       <button className="outline-button" onClick={() => switchChain({ chainId: baseSepolia.id })} disabled={isPending} type="button">
         {isPending ? "Switching…" : "Switch to Base Sepolia"}
       </button>
+    </div>
+  );
+}
+
+function GasDripBanner() {
+  const status = useGasDripOnboarding();
+  const [dismissed, setDismissed] = useState(false);
+  if (status !== "sent" || dismissed) return null;
+
+  return (
+    <div className="stall-banner" style={{ margin: "0 34px", marginTop: 16, background: "#eff8f5", borderColor: "#bfe0d3", color: "#136b58" }}>
+      <ShieldCheck size={19} />
+      <div>
+        <b>You&apos;re set — sent you a little Base Sepolia ETH.</b>
+        <p>Enough to cover a handful of USDC approvals, the one step Cadence can&apos;t sponsor for you. This only happens once.</p>
+      </div>
+      <button className="outline-button" onClick={() => setDismissed(true)} type="button">Dismiss</button>
     </div>
   );
 }

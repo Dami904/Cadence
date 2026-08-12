@@ -51,6 +51,9 @@ export default function FaucetPage() {
             <small className={isConnected ? (hasEnoughGas ? "positive" : "pending") : ""}>
               {!isConnected ? "Connect a wallet to check" : hasEnoughGas ? "Enough for a few approvals" : "Get a top-up below"}
             </small>
+            <a className="stat-faucet-link" href="https://portal.cdp.coinbase.com/products/faucet" target="_blank" rel="noreferrer">
+              Open Coinbase faucet <ArrowUpRight size={13} />
+            </a>
           </div>
         </article>
         <article className="stat-card">
@@ -61,45 +64,12 @@ export default function FaucetPage() {
             <small className={isConnected ? (hasEnoughUsdc ? "positive" : "pending") : ""}>
               {!isConnected ? "Connect a wallet to check" : hasEnoughUsdc ? "Enough for a typical deposit" : "Get some below"}
             </small>
+            <a className="stat-faucet-link" href="https://faucet.circle.com" target="_blank" rel="noreferrer">
+              Open Circle faucet <ArrowUpRight size={13} />
+            </a>
           </div>
         </article>
       </div>
-
-      <section className="section-card" style={{ marginTop: 20 }}>
-        <div className="section-heading">
-          <div>
-            <h3>Base Sepolia ETH — for gas</h3>
-            <p>Covers the one-time USDC approval per circle. A small amount goes a long way.</p>
-          </div>
-        </div>
-        <div className="review-list">
-          <div>
-            <span>COINBASE FAUCET</span>
-            <strong>Base Sepolia ETH</strong>
-            <a className="solid-button" href="https://www.coinbase.com/faucets/base-ethereum-sepolia-faucet" target="_blank" rel="noreferrer">
-              Open faucet <ArrowUpRight size={15} />
-            </a>
-          </div>
-        </div>
-      </section>
-
-      <section className="section-card" style={{ marginTop: 16 }}>
-        <div className="section-heading">
-          <div>
-            <h3>Base Sepolia USDC — for deposits and contributions</h3>
-            <p>Circle&apos;s official testnet faucet. This is the real USDC contract Cadence uses, not a mock token.</p>
-          </div>
-        </div>
-        <div className="review-list">
-          <div>
-            <span>CIRCLE FAUCET</span>
-            <strong>Base Sepolia USDC</strong>
-            <a className="solid-button" href="https://faucet.circle.com" target="_blank" rel="noreferrer">
-              Open faucet <ArrowUpRight size={15} />
-            </a>
-          </div>
-        </div>
-      </section>
 
       <div className="settings-protection" style={{ marginTop: 20 }}>
         <Check size={20} />

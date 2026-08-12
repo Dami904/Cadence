@@ -10,7 +10,7 @@ export default function WelcomePage() {
   return <main className="landing-page">
     <header className="landing-nav">
       <Link href="/welcome" className="brand-row brand-link"><div className="brand-mark"><span>c</span></div><span className="brand-name">cadence</span></Link>
-      <nav><a href="#how-it-works">How it works</a><a href="#transparent">Why Cadence</a><Link href="/connect" className="landing-login">Connect wallet</Link><Link href="/connect" className="landing-cta">Get started <ArrowRight size={16} /></Link></nav>
+      <nav><a href="#how-it-works">How it works</a><a href="#transparent">Why Cadence</a><Link href="/docs" className="landing-login">Docs</Link><Link href="/connect" className="landing-cta">Get started <ArrowRight size={16} /></Link></nav>
       <button
         type="button"
         className="mobile-menu-button"
@@ -25,7 +25,7 @@ export default function WelcomePage() {
       <nav className="mobile-nav-panel">
         <a href="#how-it-works" onClick={() => setMenuOpen(false)}>How it works</a>
         <a href="#transparent" onClick={() => setMenuOpen(false)}>Why Cadence</a>
-        <Link href="/connect" onClick={() => setMenuOpen(false)}>Connect wallet</Link>
+        <Link href="/docs" onClick={() => setMenuOpen(false)}>Docs</Link>
         <Link href="/connect" className="landing-cta" onClick={() => setMenuOpen(false)}>Get started <ArrowRight size={16} /></Link>
       </nav>
     )}
@@ -34,7 +34,7 @@ export default function WelcomePage() {
       <div className="landing-visual"><div className="orbit orbit-a" /><div className="orbit orbit-b" /><div className="orbit orbit-c" /><div className="landing-pot"><div className="pot-top"><span>DESIGN COLLECTIVE</span><b><i /> ACTIVE</b></div><p>THIS MONTH&apos;S POT</p><strong>$2,500<span>.00</span></strong><div className="pot-members"><div className="mini-avatars"><i>OA</i><i>JH</i><i>AO</i><i>+2</i></div><span>5 members · $500 each</span></div><div className="pot-next"><div><small>NEXT PAYOUT</small><b>Olivia · Aug 15</b></div><ArrowRight size={18} /></div></div><div className="floating-proof"><ShieldCheck size={18} /><div><b>Rotation locked</b><span>No one can change the order.</span></div></div></div>
     </section>
     <section id="how-it-works" className="how-section"><div className="section-intro"><span>THE CADENCE</span><h2>Your circle runs on a<br />rhythm everyone can see.</h2></div><div className="how-grid"><Feature number="01" icon={<UsersRound size={23} />} title="Gather your people" text="Create a circle, invite your people, and agree on the contribution amount." /><Feature number="02" icon={<LockKeyhole size={23} />} title="Lock the rotation" text="Payout order is set at the start. Not even Cadence can change it." /><Feature number="03" icon={<Zap size={23} />} title="Let the circle move" text="Named, inspectable KeeperHub workflows handle every payout right on time." /></div></section>
-    <section id="transparent" className="transparent-section"><div><span>POWERED BY KEEPERHUB</span><h2>Every automatic action<br />has a name, a trigger,<br />and a transaction.</h2><p>Cadence uses independently inspectable KeeperHub workflows for payouts, deposit protection, reminders, and trust-score updates. No opaque backend agent — every automated decision runs as a named KeeperHub workflow you can inspect.</p><Link href="/activity" className="watch-link dark-link">Explore KeeperHub workflows <ArrowRight size={16} /></Link></div><div className="workflow-preview"><p><CircleDollarSign size={17} /> KEEPERHUB WORKFLOW</p><h3>Cadence Payout #01</h3><div><span>Trigger</span><b>August 15, 09:00 UTC</b></div><div><span>Action</span><b>Execute round 1 payout</b></div><div><span>Result</span><b className="success-text">Ready to execute</b></div></div></section>
+    <section id="transparent" className="transparent-section"><div><span>POWERED BY KEEPERHUB</span><h2>Every automatic action<br />has a name, a trigger,<br />and a transaction.</h2><p>Cadence uses independently inspectable KeeperHub workflows for payouts, deposit protection, reminders, and trust-score updates. No opaque backend agent — every automated decision runs as a named KeeperHub workflow you can inspect.</p><Link href="/docs/workflows" className="watch-link dark-link">Explore KeeperHub workflows <ArrowRight size={16} /></Link></div><div className="workflow-preview"><p><CircleDollarSign size={17} /> KEEPERHUB WORKFLOW</p><h3>Cadence Payout #01</h3><div><span>Trigger</span><b>August 15, 09:00 UTC</b></div><div><span>Action</span><b>Execute round 1 payout</b></div><div><span>Result</span><b className="success-text">Ready to execute</b></div></div></section>
     <footer className="landing-footer"><div className="brand-row"><div className="brand-mark"><span>c</span></div><span className="brand-name">cadence</span></div><span>Onchain savings circles for everyone.</span><Link href="/connect">Enter app <ArrowRight size={15} /></Link></footer>
   </main>;
 }

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { parseEventLogs, parseUnits, type Address } from "viem";
-import { useAccount } from "wagmi";
+import { useAccount, useSignMessage } from "wagmi";
 import { ArrowRight, Check, Copy } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { cadenceContracts, circleFactoryAbi } from "@/lib/contracts";
@@ -33,6 +33,8 @@ export default function CreateCirclePage() {
   const [linkCopied, setLinkCopied] = useState(false);
   const { address, isConnected } = useAccount();
   const { write, logs, error, isPending, isConfirming, isSuccess, reset: resetWrite, notice } = useSponsoredWrite();
+  const { signMessageAsync } = useSignMessage();
+  const [nameSaveError, setNameSaveError] = useState(false);
 
   const cadenceSeconds = cadence === "weekly" ? 7 * 24 * 60 * 60 : 30 * 24 * 60 * 60;
   const payoutTimestamp = useMemo(
@@ -88,8 +90,38 @@ export default function CreateCirclePage() {
     if (createdEvent?.args.circle) setCreatedCircle(createdEvent.args.circle);
   }, [logs]);
 
+  useEffect(() => {
+    if (!createdCircle || !address) return;
+    let cancelled = false;
+    setNameSaveError(false);
+    (async () => {
+      try {
+        // Signed off-chain, not part of the createCircle() transaction — createCircle() has no
+        // name parameter, so this is the only place the name entered in step 1 ever gets saved.
+        const timestamp = Date.now();
+        const message = `Cadence circle name update\ncircle: ${createdCircle}\nname: ${name}\ntimestamp: ${timestamp}`;
+        const signature = await signMessageAsync({ message });
+        if (cancelled) return;
+        const res = await fetch("/api/circle-name", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ circleAddress: createdCircle, address, name, signature, timestamp }),
+        });
+        if (!res.ok && !cancelled) setNameSaveError(true);
+      } catch {
+        if (!cancelled) setNameSaveError(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only re-runs when a new circle is actually created — not on every keystroke in `name`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createdCircle]);
+
   const resetForAnotherCircle = () => {
     setCreatedCircle(null);
+    setNameSaveError(false);
     resetWrite();
     setCurrentStep(1);
   };
@@ -204,6 +236,7 @@ export default function CreateCirclePage() {
                   {createdCircle && (
                     <>
                       <p>Circle address: <code>{createdCircle}</code></p>
+                      {nameSaveError && <p className="form-note sponsor-notice">Couldn&apos;t save &quot;{name}&quot; as this circle&apos;s display name — it&apos;ll show by address instead. You can rename it later from the circle page.</p>}
                       <div className="invite-link-row">
                         <input readOnly value={inviteLink} onFocus={(event) => event.target.select()} />
                         <button className="button button-quiet" onClick={copyInviteLink} type="button">

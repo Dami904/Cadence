@@ -7,11 +7,13 @@ import { AppShell } from "../../components/AppShell";
 import { OnchainConnection } from "../../components/OnchainConnection";
 import { CircleDashboard } from "../../components/CircleDashboard";
 import { useCadenceCircles } from "../../lib/useCadenceCircles";
+import { useCircleNames } from "../../lib/useCircleName";
 import { ArrowRight, CirclePlus, Sparkles } from "lucide-react";
 
 export default function DashboardPage() {
   const [selectedCircle, setSelectedCircle] = useState<Address | null>(null);
   const { isLoading, myCircles } = useCadenceCircles();
+  const circleNames = useCircleNames(myCircles.map((circle) => circle.address));
 
   const activeCircle = selectedCircle ?? myCircles[0]?.address ?? null;
 
@@ -45,7 +47,7 @@ export default function DashboardPage() {
                   className={activeCircle === circle.address ? "active" : ""}
                   onClick={() => setSelectedCircle(circle.address)}
                 >
-                  {circle.address.slice(0, 6)}…{circle.address.slice(-4)}
+                  {circleNames[circle.address.toLowerCase()] ?? `${circle.address.slice(0, 6)}…${circle.address.slice(-4)}`}
                 </button>
               ))}
             </div>

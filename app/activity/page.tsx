@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { AppShell } from "../../components/AppShell";
-import { ArrowUpRight, Check, CircleDollarSign, HeartHandshake, LockKeyhole, LogOut, ShieldAlert, ShieldCheck, UsersRound } from "lucide-react";
+import { ArrowUpRight, Check, CircleDollarSign, HeartHandshake, LockKeyhole, LogOut, ShieldAlert, ShieldCheck, Sparkles, UsersRound } from "lucide-react";
 import { useActivityFeed, type ActivityEntry } from "../../lib/useActivityFeed";
 
 // Only these two AjoCircle functions are gated onlyKeeper (see contracts/AjoCircle.sol),
@@ -15,6 +17,7 @@ const workflowFor: Partial<Record<ActivityEntry["kind"], string>> = {
 };
 
 const kindIcon: Record<ActivityEntry["kind"], typeof Check> = {
+  "Circle created": Sparkles,
   "Contribution": Check,
   "Default covered": ShieldCheck,
   "Default uncovered": ShieldAlert,
@@ -29,6 +32,7 @@ const kindIcon: Record<ActivityEntry["kind"], typeof Check> = {
 };
 
 const kindTone: Record<ActivityEntry["kind"], string> = {
+  "Circle created": "violet",
   "Contribution": "teal",
   "Default covered": "coral",
   "Default uncovered": "coral",
@@ -72,9 +76,16 @@ function groupByDate(entries: ActivityEntry[]) {
   return groups;
 }
 
+const CIRCLE_LEVEL_KINDS: ActivityEntry["kind"][] = ["Circle cancelled", "Circle completed"];
+
 export default function ActivityPage() {
   const { entries, isLoading, error } = useActivityFeed();
-  const groups = groupByDate(entries);
+  const [scope, setScope] = useState<"mine" | "everyone">("mine");
+  // "Mine" keeps anything you did plus circle-wide events (cancelled/completed) that affect
+  // you even though they're not attributed to any one address — everything else (other
+  // members contributing, joining, leaving) is still onchain and visible, just filtered out here.
+  const visibleEntries = scope === "everyone" ? entries : entries.filter((entry) => entry.isYou || CIRCLE_LEVEL_KINDS.includes(entry.kind));
+  const groups = groupByDate(visibleEntries);
   const contributionsMade = entries.filter((entry) => entry.kind === "Contribution" && entry.isYou).length;
   const payoutsReceived = entries.filter((entry) => entry.kind === "Payout" && entry.isYou).length;
 
@@ -86,12 +97,16 @@ export default function ActivityPage() {
           <h1>Activity.</h1>
           <p>A complete record of your circles and contributions, read directly from the chain.</p>
         </div>
+        <div className="circle-switcher">
+          <button className={scope === "mine" ? "active" : ""} onClick={() => setScope("mine")}>Just me</button>
+          <button className={scope === "everyone" ? "active" : ""} onClick={() => setScope("everyone")}>Everyone in my circles</button>
+        </div>
       </div>
       <section className="activity-layout">
         <div className="activity-feed">
           {isLoading && <p className="date-divider">LOADING…</p>}
           {!isLoading && error && <p className="form-error dashboard-error">Couldn&apos;t load activity from the chain — {error.message}</p>}
-          {!isLoading && !error && entries.length === 0 && <p className="date-divider">No onchain activity yet for your circles.</p>}
+          {!isLoading && !error && visibleEntries.length === 0 && <p className="date-divider">{entries.length === 0 ? "No onchain activity yet for your circles." : "No activity from just you yet — try “Everyone in my circles”."}</p>}
           {groups.map((group) => (
             <div key={group.label}>
               <p className="date-divider">{group.label}</p>
@@ -112,11 +127,28 @@ export default function ActivityPage() {
 }
 
 function ActivityItem({ entry }: { entry: ActivityEntry }) {
+  const router = useRouter();
   const Icon = kindIcon[entry.kind];
   const tone = kindTone[entry.kind];
   const workflow = workflowFor[entry.kind];
+  // Still a member → straight into the circle. Not (anymore, or not yet — e.g. a "Circle
+  // created" entry for a circle you haven't joined) → the join page for that address instead.
+  const destination = entry.isMember ? `/circle/${entry.circleAddress}` : `/join?address=${entry.circleAddress}`;
+  const go = () => router.push(destination);
+
   return (
-    <article className="activity-item">
+    <article
+      className="activity-item clickable"
+      role="link"
+      tabIndex={0}
+      onClick={go}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          go();
+        }
+      }}
+    >
       <div className={`activity-icon ${tone}`}><Icon size={18} /></div>
       <div className="activity-copy">
         <span>{entry.kind}{entry.isYou ? " · You" : ""}</span>
@@ -126,7 +158,7 @@ function ActivityItem({ entry }: { entry: ActivityEntry }) {
       </div>
       <div className="activity-meta">
         <time>{formatTime(entry.timestamp)}</time>
-        <a href={`https://sepolia.basescan.org/tx/${entry.hash}`} target="_blank" rel="noreferrer">
+        <a href={`https://sepolia.basescan.org/tx/${entry.hash}`} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
           <button type="button">{entry.hash.slice(0, 6)}…{entry.hash.slice(-4)}<ArrowUpRight size={13} /></button>
         </a>
       </div>

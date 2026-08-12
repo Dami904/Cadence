@@ -21,6 +21,7 @@ import {
 import { ajoCircleAbi, CircleStatus, erc20Abi } from "../lib/contracts";
 import { formatWriteError } from "../lib/formatError";
 import { useCircleDetails, type MemberStatus } from "../lib/useCircleDetails";
+import { useCircleName } from "../lib/useCircleName";
 import { useSponsoredWrite } from "../lib/useSponsoredWrite";
 
 const AVATAR_COLORS = ["teal", "peach", "violet", "blue", "yellow"] as const;
@@ -52,6 +53,7 @@ function statusTone(status: number | undefined) {
 export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
   const { address: myAddress, isConnected } = useAccount();
   const details = useCircleDetails(circleAddress);
+  const circleName = useCircleName(circleAddress);
   const [pendingAction, setPendingAction] = useState<"approve" | "contribute" | "start" | "replenish" | "leave" | "cover" | "cancel" | "withdraw" | null>(null);
   const [withdrawingSlot, setWithdrawingSlot] = useState<Address | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -202,8 +204,8 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
       <div className="intro-row">
         <div>
           <div className={`eyebrow status-tone-${statusTone(status)}`}><span className={`live-dot tone-${statusTone(status)}`} /> {statusLabel(status)}</div>
-          <h1>{shortAddress(circleAddress)}</h1>
-          <p className="intro-copy">Your shared savings rhythm, onchain and on time.</p>
+          <h1>{circleName ?? shortAddress(circleAddress)}</h1>
+          <p className="intro-copy">{circleName ? shortAddress(circleAddress) : "Your shared savings rhythm, onchain and on time."}</p>
         </div>
       </div>
 
