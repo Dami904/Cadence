@@ -54,17 +54,25 @@ export default function CreateCirclePage() {
   const createCircle = () => {
     if (!isConnected || !address || !cadenceContracts.isConfigured || configurationError) return;
 
+    // Deposit floor is 2x the contribution (contract-enforced) so a member's security deposit
+    // survives more than one consecutive default before another member has to step in and cover it.
+    const contributionAmountWei = parseUnits(amount, 6);
+    // A circle that never fills gets 30 days before anyone can cancelIfExpired() it and members
+    // pull their deposits back — no configurable field for this yet, just a fixed, generous window.
+    const formingDeadline = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+
     write({
       address: cadenceContracts.circleFactory,
       abi: circleFactoryAbi,
       functionName: "createCircle",
       args: [
         cadenceContracts.usdc,
-        parseUnits(amount, 6),
-        parseUnits(amount, 6),
+        contributionAmountWei,
+        contributionAmountWei * 2n,
         BigInt(members),
         BigInt(cadenceSeconds),
         BigInt(payoutTimestamp),
+        BigInt(formingDeadline),
       ],
     });
   };
@@ -146,7 +154,7 @@ export default function CreateCirclePage() {
               <div>
                 <p className="section-kicker">Terms</p>
                 <h2>Define the rhythm.</h2>
-                <p className="muted">Each member deposits one contribution as security, then contributes this amount each round.</p>
+                <p className="muted">Each member posts a security deposit worth two contributions up front, then contributes this amount each round.</p>
               </div>
               <label>
                 Contribution per round (USDC)
@@ -175,12 +183,13 @@ export default function CreateCirclePage() {
               <div>
                 <p className="section-kicker">Ready to deploy</p>
                 <h2>One final check.</h2>
-                <p className="muted">After deployment, every participant — including the creator — joins with a {amount} USDC security deposit.</p>
+                <p className="muted">After deployment, every participant — including the creator — joins with a {Number(amount) * 2} USDC security deposit.</p>
               </div>
               <div className="review-list">
                 <div><span>Name</span><strong>{name || "Untitled circle"}</strong></div>
                 <div><span>Members</span><strong>{members}</strong></div>
                 <div><span>Per round</span><strong>{amount} USDC</strong></div>
+                <div><span>Security deposit</span><strong>{Number(amount) * 2} USDC</strong></div>
                 <div><span>Cadence</span><strong>{cadence}</strong></div>
               </div>
               {!cadenceContracts.isConfigured && <p className="form-error">Add the deployed contract addresses to your environment before creating a circle.</p>}

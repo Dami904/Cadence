@@ -15,7 +15,7 @@ import {ICircleFactoryRegistry} from "./interfaces/ICircleFactoryRegistry.sol";
 contract AjoCircle is ERC2771Context {
     using SafeERC20 for IERC20;
 
-    enum Status { Forming, Active, Completed }
+    enum Status { Forming, Active, Completed, Cancelled }
 
     IERC20 public immutable asset;
     IKeeperAuthorization public immutable keeperAuthorization;
@@ -26,6 +26,7 @@ contract AjoCircle is ERC2771Context {
     uint256 public immutable targetMemberCount;
     uint256 public immutable roundDuration;
     uint256 public immutable firstRoundDeadline;
+    uint256 public immutable formingDeadline;
 
     Status public status;
     uint256 public currentRound;
@@ -48,6 +49,8 @@ contract AjoCircle is ERC2771Context {
     event DepositReplenished(address indexed member, uint256 amount);
     event DepositCovered(address indexed payer, address indexed member, uint256 amount);
     event DepositReturned(address indexed member, uint256 amount);
+    event CircleCancelled();
+    event DefaultUncovered(uint256 indexed round, address indexed member);
 
     error InvalidConfiguration();
     error InvalidStatus();
@@ -60,8 +63,8 @@ contract AjoCircle is ERC2771Context {
     error DeadlineNotReached();
     error DefaultAlreadyCovered();
     error FundingIncomplete();
-    error DepositInsufficient();
     error NothingToCover();
+    error NothingToWithdraw();
 
     constructor(
         address asset_,
@@ -73,12 +76,13 @@ contract AjoCircle is ERC2771Context {
         uint256 targetMemberCount_,
         uint256 roundDuration_,
         uint256 firstRoundDeadline_,
+        uint256 formingDeadline_,
         address trustedForwarder_
     ) ERC2771Context(trustedForwarder_) {
         if (
             asset_ == address(0) || keeperAuthorization_ == address(0) || factory_ == address(0) || creator_ == address(0) || contributionAmount_ == 0 ||
-            depositAmount_ < contributionAmount_ || targetMemberCount_ < 2 || roundDuration_ == 0 ||
-            firstRoundDeadline_ <= block.timestamp
+            depositAmount_ < 2 * contributionAmount_ || targetMemberCount_ < 2 || roundDuration_ == 0 ||
+            firstRoundDeadline_ <= block.timestamp || formingDeadline_ <= block.timestamp
         ) revert InvalidConfiguration();
 
         asset = IERC20(asset_);
@@ -90,6 +94,7 @@ contract AjoCircle is ERC2771Context {
         targetMemberCount = targetMemberCount_;
         roundDuration = roundDuration_;
         firstRoundDeadline = firstRoundDeadline_;
+        formingDeadline = formingDeadline_;
         status = Status.Forming;
     }
 
@@ -128,6 +133,30 @@ contract AjoCircle is ERC2771Context {
         _removeMember(member);
         asset.safeTransfer(member, refund);
         emit MemberLeft(member, refund);
+    }
+
+    /// @notice Anyone may cancel a circle stuck Forming past its forming deadline — a fallback
+    /// for abandoned circles whose creator vanishes and remaining members never individually
+    /// call leave() themselves. Same "anyone may call it" model as start(): no admin role created.
+    function cancelIfExpired() external {
+        if (status != Status.Forming) revert InvalidStatus();
+        if (block.timestamp < formingDeadline) revert DeadlineNotReached();
+        status = Status.Cancelled;
+        factory.onCircleStatusChanged(uint8(status));
+        emit CircleCancelled();
+    }
+
+    /// @notice Pull-pattern refund after cancellation — each member withdraws their own deposit
+    /// rather than one call looping refunds to everyone, so a single failing transfer can't
+    /// block the rest.
+    function withdrawAfterCancel() external onlyMember {
+        address member = _msgSender();
+        if (status != Status.Cancelled) revert InvalidStatus();
+        uint256 amount = securityDepositBalance[member];
+        if (amount == 0) revert NothingToWithdraw();
+        securityDepositBalance[member] = 0;
+        asset.safeTransfer(member, amount);
+        emit DepositReturned(member, amount);
     }
 
     /// @notice Anyone may start a full circle. This does not create an admin role.
@@ -181,7 +210,10 @@ contract AjoCircle is ERC2771Context {
         if (block.timestamp < currentRoundDeadline) revert DeadlineNotReached();
         if (contributed[round][member]) return;
         if (defaultCovered[round][member]) revert DefaultAlreadyCovered();
-        if (securityDepositBalance[member] < contributionAmount) revert DepositInsufficient();
+        if (securityDepositBalance[member] < contributionAmount) {
+            emit DefaultUncovered(round, member);
+            return;
+        }
 
         defaultCovered[round][member] = true;
         securityDepositBalance[member] -= contributionAmount;

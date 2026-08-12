@@ -65,6 +65,7 @@ export const circleFactoryAbi = [
       { name: "targetMemberCount", type: "uint256" },
       { name: "roundDuration", type: "uint256" },
       { name: "firstRoundDeadline", type: "uint256" },
+      { name: "formingDeadline", type: "uint256" },
     ],
     outputs: [{ name: "circle", type: "address" }],
   },
@@ -77,6 +78,7 @@ export const ajoCircleAbi = [
   { type: "function", name: "depositAmount", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
   { type: "function", name: "targetMemberCount", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
   { type: "function", name: "roundDuration", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
+  { type: "function", name: "formingDeadline", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
   { type: "function", name: "memberCount", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
   { type: "function", name: "status", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint8" }] },
   { type: "function", name: "currentRound", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
@@ -114,6 +116,8 @@ export const ajoCircleAbi = [
   },
   { type: "function", name: "join", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "leave", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { type: "function", name: "cancelIfExpired", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { type: "function", name: "withdrawAfterCancel", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "contribute", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "start", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "replenishDeposit", stateMutability: "nonpayable", inputs: [], outputs: [] },
@@ -204,9 +208,19 @@ export const ajoCircleEvents = [
       { name: "amount", type: "uint256", indexed: false },
     ],
   },
+  { type: "event", name: "CircleCancelled", anonymous: false, inputs: [] },
+  {
+    type: "event",
+    name: "DefaultUncovered",
+    anonymous: false,
+    inputs: [
+      { name: "round", type: "uint256", indexed: true },
+      { name: "member", type: "address", indexed: true },
+    ],
+  },
 ] as const;
 
-export const CircleStatus = { Forming: 0, Active: 1, Completed: 2 } as const;
+export const CircleStatus = { Forming: 0, Active: 1, Completed: 2, Cancelled: 3 } as const;
 
 export const trustScoreRegistryAbi = [
   { type: "function", name: "hasLinkedIdentity", stateMutability: "view", inputs: [{ name: "", type: "address" }], outputs: [{ name: "", type: "bool" }] },

@@ -8,13 +8,17 @@ const RATE_LIMIT_PER_DAY = 20;
 const MAX_REQUEST_GAS = 500_000n;
 const KEEPERHUB_WAIT_TIMEOUT_MS = 30_000;
 
+const CREATE_CIRCLE_SIGNATURE = "createCircle(address,uint256,uint256,uint256,uint256,uint256,uint256)";
+
 // Only these calls are ever sponsored — even against a trusted target, arbitrary calldata isn't
 // forwarded. Selectors are derived from the same ABIs the frontend already uses, not hardcoded,
 // so this list can't silently drift from what the contracts actually expose.
 const SPONSORED_SELECTORS = new Set([
-  toFunctionSelector("createCircle(address,uint256,uint256,uint256,uint256,uint256)"),
+  toFunctionSelector(CREATE_CIRCLE_SIGNATURE),
   toFunctionSelector("join()"),
   toFunctionSelector("leave()"),
+  toFunctionSelector("cancelIfExpired()"),
+  toFunctionSelector("withdrawAfterCancel()"),
   toFunctionSelector("contribute()"),
   toFunctionSelector("start()"),
   toFunctionSelector("replenishDeposit()"),
@@ -78,7 +82,7 @@ export async function POST(request: NextRequest) {
     if (!isCircle) {
       return NextResponse.json({ error: "Target isn't a Cadence contract" }, { status: 400 });
     }
-  } else if (selector !== toFunctionSelector("createCircle(address,uint256,uint256,uint256,uint256,uint256)")) {
+  } else if (selector !== toFunctionSelector(CREATE_CIRCLE_SIGNATURE)) {
     return NextResponse.json({ error: "That action isn't valid on the factory" }, { status: 400 });
   }
 

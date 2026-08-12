@@ -33,7 +33,8 @@ contract CircleFactory is ERC2771Context {
         uint256 depositAmount,
         uint256 targetMemberCount,
         uint256 roundDuration,
-        uint256 firstRoundDeadline
+        uint256 firstRoundDeadline,
+        uint256 formingDeadline
     ) external returns (address circle) {
         address creator = _msgSender();
         circle = address(
@@ -47,6 +48,7 @@ contract CircleFactory is ERC2771Context {
                 targetMemberCount,
                 roundDuration,
                 firstRoundDeadline,
+                formingDeadline,
                 trustedForwarder()
             )
         );

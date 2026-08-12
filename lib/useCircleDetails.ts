@@ -79,8 +79,8 @@ export function useCircleDetails(circleAddress: Address | undefined) {
 
   // A round is stalled (not just "waiting") when it's past its deadline, not fully
   // funded, and at least one unpaid member's deposit can't cover their contribution —
-  // checkAndCoverDefault() will revert for them until they replenish, so nothing but
-  // that member's action can move the round forward.
+  // checkAndCoverDefault() emits DefaultUncovered and no-ops for them until someone
+  // replenishes, so nothing but that happening can move the round forward.
   const isPastDeadline = currentRoundDeadline !== undefined && Date.now() >= Number(currentRoundDeadline) * 1000;
   const pot = contributionAmount !== undefined && targetMemberCount !== undefined ? contributionAmount * targetMemberCount : undefined;
   const isFullyFunded = pot !== undefined && currentRoundFunding !== undefined && currentRoundFunding >= pot;

@@ -178,7 +178,7 @@ function JoinPageContent() {
                   )}
                 </div>
               )}
-              <div className="lock-callout small"><LockKeyhole size={19} /><div><b>One round is protected.</b><p>Your deposit covers a missed contribution and remains in the contract.</p></div></div>
+              <div className="lock-callout small"><LockKeyhole size={19} /><div><b>Two rounds are protected.</b><p>Your deposit covers up to two missed contributions in a row and remains in the contract.</p></div></div>
               {!isConnected && <p className="form-error">Connect your Base Sepolia wallet to continue.</p>}
               {isConnected && insufficientBalance && (
                 <p className="form-error">You need {depositLabel} USDC in this wallet to join — get Base Sepolia test USDC from a faucet first.</p>

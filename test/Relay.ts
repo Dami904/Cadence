@@ -12,7 +12,8 @@ describe("ERC-2771 relay", function () {
     const factory = await ethers.deployContract("CircleFactory", [await authorization.getAddress(), await forwarder.getAddress()]);
     const contribution = 500_000_000n;
     const deadline = (await time.latest()) + 3_600;
-    await factory.createCircle(await token.getAddress(), contribution, contribution, 2, 30 * 24 * 60 * 60, deadline);
+    const formingDeadline = (await time.latest()) + 7 * 24 * 60 * 60;
+    await factory.createCircle(await token.getAddress(), contribution, contribution * 2n, 2, 30 * 24 * 60 * 60, deadline, formingDeadline);
     const circle = await ethers.getContractAt("AjoCircle", await factory.circleAt(0));
 
     await token.mint(memberTwo.address, 5_000_000_000n);
@@ -68,7 +69,7 @@ describe("ERC-2771 relay", function () {
 
     expect(await circle.isMember(memberTwo.address)).to.equal(true);
     expect(await circle.memberCount()).to.equal(1n);
-    expect(await token.balanceOf(memberTwo.address)).to.equal(4_500_000_000n);
+    expect(await token.balanceOf(memberTwo.address)).to.equal(4_000_000_000n);
 
     // The relayer's own wallet paid the gas; the member's ETH balance never moved.
     const gasCost = receipt!.gasUsed * receipt!.gasPrice;

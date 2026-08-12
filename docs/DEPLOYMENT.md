@@ -9,9 +9,40 @@
 - Keeper Authorization: `0x37D7fe84C4154Ec4A59d0750a654e97d787A572d`
 - Trust Score Registry: `0xfAd996eF67d5531cCcA3Ca3822c4e09fA034f86D`
 - Cadence Forwarder (ERC-2771): `0xD73Eda898c3DbF6996d409fB2442Dd38f719e608`
-- Circle Factory: `0x129c04f9b3561808Bb38f54b86eFB9A86696b8C5` (redeployed 2026-08-11 for ERC-2771 support, deploy block `45336321` — see below)
+- Circle Factory: `0xe53c42cDdbb5a6dfc137c13d74FA082dA10f8D6F` (redeployed 2026-08-12 for `formingDeadline`/cancellation support, deploy block `45362205` — see below). The forwarder was reused, not redeployed, so existing circles keep trusting the same relayer.
 
 The local `.env` is intentionally ignored. It contains the deployer private key and must never be committed, copied into client-side variables, or shared.
+
+### 2026-08-12 — Abandoned-circle cancellation, higher deposit floor, visible defaults
+
+Contract-level fixes for two real bugs flagged in review:
+
+- **Funds could be locked forever if a circle never filled.** `leave()` already covered a member
+  exiting individually while `Forming`, but nothing helped if the creator vanished and remaining
+  members never called it themselves. `AjoCircle` now takes a `formingDeadline` constructor param;
+  once passed while still `Forming`, anyone can call `cancelIfExpired()` (same "anyone may call
+  it, no admin role" model as `start()`), flipping to a new `Status.Cancelled`. Each member then
+  calls `withdrawAfterCancel()` themselves — a pull-pattern refund, not a loop that pushes to
+  everyone, so one failing transfer can't block the rest. `/create` sets a 30-day forming deadline
+  automatically (not yet a configurable field).
+- **A circle could brick permanently on a second consecutive default.** The security deposit floor
+  is now `2x` the contribution instead of `1x` (`/create`'s deposit input follows automatically),
+  so a member survives two consecutive defaults before another member's help
+  (`coverDeposit`, unchanged) is needed. `checkAndCoverDefault` no longer reverts when a deposit
+  can't cover the round — it emits `DefaultUncovered(round, member)` and leaves state as-is, so the
+  keeper workflow's default-detection loop keeps running instead of failing hard on one member's
+  bad luck, and the failure is now a discoverable event rather than a silent revert.
+
+An unanimous-consent ejection/dissolution mechanism (letting every *other* member force out a
+repeat defaulter) was deliberately **not** built — it would reopen the build spec's closed
+decision against delay/redistribute/skip branching, and is a product call, not an engineering one.
+
+Test coverage grew from 11 to 16 cases: the full completion cycle, the (now three-default) brick
+scenario asserting `DefaultUncovered`, `leave()`/cancel-and-refund, the five previously-untested
+custom errors (`AlreadyMember`, `CircleFull`, `AlreadyContributed`, `ContributionWindowClosed`,
+`DeadlineNotReached`), and `TrustScoreRegistry.recordDefault`/`OutcomeSkipped`. A solvency/fuzz
+invariant pass (Foundry) is still open. `.github/workflows/contracts-test.yml` now runs the suite
+on every push.
 
 ### 2026-08-11 — Gas abstraction: meta-transaction relayer (CDP Paymaster removed)
 

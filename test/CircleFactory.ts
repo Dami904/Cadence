@@ -10,16 +10,18 @@ describe("CircleFactory", function () {
     const authorization = await ethers.deployContract("KeeperAuthorization", [owner.address]);
     const factory = await ethers.deployContract("CircleFactory", [await authorization.getAddress(), ethers.ZeroAddress]);
     const contribution = 500_000_000n;
+    const deposit = contribution * 2n;
     const deadline = (await time.latest()) + 3_600;
-    return { owner, memberTwo, memberThree, token, authorization, factory, contribution, deadline };
+    const formingDeadline = (await time.latest()) + 7 * 24 * 60 * 60;
+    return { owner, memberTwo, memberThree, token, authorization, factory, contribution, deposit, deadline, formingDeadline };
   }
 
   it("deploys a circle, records discovery metadata, and emits CircleCreated", async function () {
-    const { owner, token, factory, contribution, deadline } = await deployFixture();
+    const { owner, token, factory, contribution, deposit, deadline, formingDeadline } = await deployFixture();
 
     expect(await factory.circleCount()).to.equal(0n);
 
-    const tx = await factory.createCircle(await token.getAddress(), contribution, contribution, 3, 30 * 24 * 60 * 60, deadline);
+    const tx = await factory.createCircle(await token.getAddress(), contribution, deposit, 3, 30 * 24 * 60 * 60, deadline, formingDeadline);
     const circleAddress = await factory.circleAt(0);
     await expect(tx).to.emit(factory, "CircleCreated").withArgs(circleAddress, 3n, await token.getAddress(), owner.address);
 
@@ -33,9 +35,9 @@ describe("CircleFactory", function () {
   });
 
   it("rejects onCircleStatusChanged from anything but the circle itself, and reflects real status transitions", async function () {
-    const { owner, memberTwo, memberThree, token, factory, contribution, deadline } = await deployFixture();
+    const { owner, memberTwo, memberThree, token, factory, contribution, deposit, deadline, formingDeadline } = await deployFixture();
 
-    await factory.createCircle(await token.getAddress(), contribution, contribution, 3, 30 * 24 * 60 * 60, deadline);
+    await factory.createCircle(await token.getAddress(), contribution, deposit, 3, 30 * 24 * 60 * 60, deadline, formingDeadline);
     const circleAddress = await factory.circleAt(0);
     const circle = await hre.ethers.getContractAt("AjoCircle", circleAddress);
 
