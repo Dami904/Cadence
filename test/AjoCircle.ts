@@ -89,7 +89,7 @@ describe("AjoCircle", function () {
     }
 
     await expect(circle.connect(outsider).cancelIfExpired()).to.be.revertedWithCustomError(circle, "DeadlineNotReached");
-    await expect(circle.connect(owner).withdrawAfterCancel()).to.be.revertedWithCustomError(circle, "InvalidStatus");
+    await expect(circle.connect(owner).withdrawDeposit(owner.address)).to.be.revertedWithCustomError(circle, "InvalidStatus");
 
     await time.increaseTo(formingDeadline);
     // Anyone can trigger it — same permission model as start(), no admin role.
@@ -100,16 +100,17 @@ describe("AjoCircle", function () {
     await expect(circle.connect(outsider).cancelIfExpired()).to.be.revertedWithCustomError(circle, "InvalidStatus");
 
     const balanceBefore = await token.balanceOf(owner.address);
-    await expect(circle.connect(owner).withdrawAfterCancel())
+    await expect(circle.connect(owner).withdrawDeposit(owner.address))
       .to.emit(circle, "DepositReturned").withArgs(owner.address, deposit);
     expect(await token.balanceOf(owner.address)).to.equal(balanceBefore + deposit);
 
-    // Pull-pattern: can't withdraw twice, and a non-member never had anything to withdraw.
-    await expect(circle.connect(owner).withdrawAfterCancel()).to.be.revertedWithCustomError(circle, "NothingToWithdraw");
-    await expect(circle.connect(outsider).withdrawAfterCancel()).to.be.revertedWithCustomError(circle, "MemberOnly");
+    // Pull-pattern: can't withdraw twice, and only the deposit's owner (here, the member
+    // themselves — no rescue happened) can ever claim it.
+    await expect(circle.connect(owner).withdrawDeposit(owner.address)).to.be.revertedWithCustomError(circle, "NothingToWithdraw");
+    await expect(circle.connect(outsider).withdrawDeposit(owner.address)).to.be.revertedWithCustomError(circle, "NotDepositOwner");
   });
 
-  it("returns every member's deposit once the circle completes its final round", async function () {
+  it("lets every member pull their own deposit back once the circle completes its final round", async function () {
     const { owner, memberTwo, memberThree, keeper, token, circle, deposit, deadline } = await deployFixture();
     await circle.start();
 
@@ -124,12 +125,16 @@ describe("AjoCircle", function () {
     }
 
     expect(await circle.status()).to.equal(2n); // Completed
+    // Deposits aren't auto-returned (that used to be an unbounded loop inside executePayout that
+    // one bad transfer could block) — each member pulls their own via withdrawDeposit.
     for (const member of [owner, memberTwo, memberThree]) {
+      expect(await circle.securityDepositBalance(member.address)).to.equal(deposit);
+      await expect(circle.connect(member).withdrawDeposit(member.address))
+        .to.emit(circle, "DepositReturned").withArgs(member.address, deposit);
       expect(await circle.securityDepositBalance(member.address)).to.equal(0n);
-      // 3 contributions out + deposit out, one full pot in + deposit back at completion — nets to zero.
+      // 3 contributions out + deposit out, one full pot in + deposit back on withdrawal — nets to zero.
       expect(await token.balanceOf(member.address)).to.equal(5_000_000_000n);
     }
-    void deposit;
   });
 
   it("lets another member cover a fellow member's deposit so a third default doesn't permanently stall the circle", async function () {
@@ -166,15 +171,28 @@ describe("AjoCircle", function () {
       .to.be.revertedWithCustomError(circle, "FundingIncomplete");
 
     // Another member rescues it — no admin, no single point of override.
+    const memberTwoBalanceBeforeRescue = await (await hre.ethers.getContractAt("MockUSDC", await circle.asset())).balanceOf(memberTwo.address);
     await expect(circle.connect(memberTwo).coverDeposit(owner.address))
       .to.emit(circle, "DepositCovered").withArgs(memberTwo.address, owner.address, deposit);
     expect(await circle.securityDepositBalance(owner.address)).to.equal(deposit);
+    // The rescuer, not the defaulter, now owns that deposit balance.
+    expect(await circle.depositOwner(owner.address)).to.equal(memberTwo.address);
 
     await expect(circle.connect(keeper).checkAndCoverDefault(3, owner.address))
       .to.emit(circle, "DefaultCovered").withArgs(3, owner.address, contribution);
     await expect(circle.connect(keeper).executePayout(3))
       .to.emit(circle, "PayoutExecuted").withArgs(3, memberThree.address, contribution * 3n)
       .and.to.emit(circle, "CircleCompleted").withArgs(3);
+
+    // The unused remainder of owner's deposit (deposit - contribution drawn for round 3) belongs
+    // to memberTwo, who funded the rescue — not to owner, who defaulted three times running.
+    const token = await hre.ethers.getContractAt("MockUSDC", await circle.asset());
+    await expect(circle.connect(owner).withdrawDeposit(owner.address))
+      .to.be.revertedWithCustomError(circle, "NotDepositOwner");
+    const remainder = deposit - contribution;
+    await expect(circle.connect(memberTwo).withdrawDeposit(owner.address))
+      .to.emit(circle, "DepositReturned").withArgs(owner.address, remainder);
+    expect(await token.balanceOf(memberTwo.address)).to.equal(memberTwoBalanceBeforeRescue - deposit + remainder);
   });
 
   it("rejects joining twice and joining a circle that's already full", async function () {
@@ -208,5 +226,51 @@ describe("AjoCircle", function () {
       .to.be.revertedWithCustomError(circle, "DeadlineNotReached");
     await expect(circle.connect(keeper).executePayout(1))
       .to.be.revertedWithCustomError(circle, "DeadlineNotReached");
+  });
+
+  it("rejects a member or any other non-keeper address calling checkAndCoverDefault or executePayout directly", async function () {
+    const { owner, memberTwo, memberThree, outsider, circle, deadline } = await deployFixture();
+    await circle.start();
+    await circle.connect(memberTwo).contribute();
+    await circle.connect(memberThree).contribute();
+    await time.increaseTo(deadline);
+
+    // A member of the circle — even the one whose payout it is — is not a keeper.
+    for (const caller of [owner, memberTwo, outsider]) {
+      await expect(circle.connect(caller).checkAndCoverDefault(1, owner.address))
+        .to.be.revertedWithCustomError(circle, "KeeperOnly");
+      await expect(circle.connect(caller).executePayout(1))
+        .to.be.revertedWithCustomError(circle, "KeeperOnly");
+    }
+  });
+
+  it("rejects replenishDeposit and coverDeposit outside Status.Active", async function () {
+    const { ethers } = hre;
+    const [owner, memberTwo, memberThree, , outsider] = await ethers.getSigners();
+    const token = await ethers.deployContract("MockUSDC");
+    const authorization = await ethers.deployContract("KeeperAuthorization", [owner.address]);
+    const factory = await ethers.deployContract("CircleFactory", [await authorization.getAddress(), ethers.ZeroAddress]);
+    const contribution = 500_000_000n;
+    const deposit = contribution * 2n;
+    const deadline = (await time.latest()) + 3_600;
+    const formingDeadline = (await time.latest()) + 3_600;
+    await factory.createCircle(await token.getAddress(), contribution, deposit, 3, 30 * 24 * 60 * 60, deadline, formingDeadline);
+    const circle = await ethers.getContractAt("AjoCircle", await factory.circleAt(0));
+    for (const member of [owner, memberTwo, memberThree]) {
+      await token.mint(member.address, 5_000_000_000n);
+      await token.connect(member).approve(await circle.getAddress(), 5_000_000_000n);
+      await circle.connect(member).join();
+    }
+
+    // Both functions are Active-only, so they're unreachable while still Forming too — not just
+    // after Cancelled/Completed, where the real risk (tokens sent with no withdrawal path) lives.
+    await expect(circle.connect(owner).replenishDeposit()).to.be.revertedWithCustomError(circle, "InvalidStatus");
+
+    await time.increaseTo(formingDeadline);
+    await circle.connect(outsider).cancelIfExpired();
+    expect(await circle.status()).to.equal(3n); // Cancelled
+
+    await expect(circle.connect(owner).replenishDeposit()).to.be.revertedWithCustomError(circle, "InvalidStatus");
+    await expect(circle.connect(owner).coverDeposit(memberTwo.address)).to.be.revertedWithCustomError(circle, "InvalidStatus");
   });
 });

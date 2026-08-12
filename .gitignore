@@ -6,3 +6,7 @@ cache/
 typechain-types/
 .next/
 node_modules/
+
+.vercel
+.env*
+*.tsbuildinfo

@@ -1,12 +1,34 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Check, CircleDollarSign, LockKeyhole, ShieldCheck, Sparkles, UsersRound, Zap } from "lucide-react";
+import { ArrowRight, CircleDollarSign, LockKeyhole, Menu, ShieldCheck, Sparkles, UsersRound, X, Zap } from "lucide-react";
 
 export default function WelcomePage() {
+  const [menuOpen, setMenuOpen] = useState(false);
+
   return <main className="landing-page">
     <header className="landing-nav">
       <Link href="/welcome" className="brand-row brand-link"><div className="brand-mark"><span>c</span></div><span className="brand-name">cadence</span></Link>
       <nav><a href="#how-it-works">How it works</a><a href="#transparent">Why Cadence</a><Link href="/connect" className="landing-login">Connect wallet</Link><Link href="/connect" className="landing-cta">Get started <ArrowRight size={16} /></Link></nav>
+      <button
+        type="button"
+        className="mobile-menu-button"
+        aria-label={menuOpen ? "Close menu" : "Open menu"}
+        aria-expanded={menuOpen}
+        onClick={() => setMenuOpen((open) => !open)}
+      >
+        {menuOpen ? <X size={22} /> : <Menu size={22} />}
+      </button>
     </header>
+    {menuOpen && (
+      <nav className="mobile-nav-panel">
+        <a href="#how-it-works" onClick={() => setMenuOpen(false)}>How it works</a>
+        <a href="#transparent" onClick={() => setMenuOpen(false)}>Why Cadence</a>
+        <Link href="/connect" onClick={() => setMenuOpen(false)}>Connect wallet</Link>
+        <Link href="/connect" className="landing-cta" onClick={() => setMenuOpen(false)}>Get started <ArrowRight size={16} /></Link>
+      </nav>
+    )}
     <section className="landing-hero">
       <div className="landing-copy"><div className="landing-pill"><Sparkles size={14} /> ONCHAIN SAVINGS, HUMAN RHYTHM</div><h1>Save together.<br /><i>Move forward</i> together.</h1><p>Cadence makes rotating savings circles simple, transparent, and automatic—without a human holding the pot.</p><div className="hero-actions"><Link href="/connect" className="landing-cta large">Start a circle <ArrowRight size={17} /></Link><a href="#how-it-works" className="watch-link">See how it works <span>↓</span></a></div><div className="hero-trust"><div className="mini-avatars"><i>AM</i><i>JH</i><i>OA</i><i>+12</i></div><span>Built for trusted circles, everywhere.</span></div></div>
       <div className="landing-visual"><div className="orbit orbit-a" /><div className="orbit orbit-b" /><div className="orbit orbit-c" /><div className="landing-pot"><div className="pot-top"><span>DESIGN COLLECTIVE</span><b><i /> ACTIVE</b></div><p>THIS MONTH&apos;S POT</p><strong>$2,500<span>.00</span></strong><div className="pot-members"><div className="mini-avatars"><i>OA</i><i>JH</i><i>AO</i><i>+2</i></div><span>5 members · $500 each</span></div><div className="pot-next"><div><small>NEXT PAYOUT</small><b>Olivia · Aug 15</b></div><ArrowRight size={18} /></div></div><div className="floating-proof"><ShieldCheck size={18} /><div><b>Rotation locked</b><span>No one can change the order.</span></div></div></div>

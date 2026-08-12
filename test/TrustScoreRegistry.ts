@@ -8,9 +8,10 @@ describe("TrustScoreRegistry", function () {
     const authorization = await ethers.deployContract("KeeperAuthorization", [owner.address]);
     const identity = await ethers.deployContract("MockERC8004IdentityRegistry");
     const reputation = await ethers.deployContract("MockERC8004ReputationRegistry");
+    const forwarder = await ethers.deployContract("CadenceForwarder");
     await identity.setOwner(42, member.address);
     const registry = await ethers.deployContract("TrustScoreRegistry", [
-      await identity.getAddress(), await reputation.getAddress(), await authorization.getAddress(),
+      await identity.getAddress(), await reputation.getAddress(), await authorization.getAddress(), await forwarder.getAddress(),
     ]);
 
     await registry.connect(member).linkIdentity(42);
@@ -32,9 +33,10 @@ describe("TrustScoreRegistry", function () {
     const authorization = await ethers.deployContract("KeeperAuthorization", [owner.address]);
     const identity = await ethers.deployContract("MockERC8004IdentityRegistry");
     const reputation = await ethers.deployContract("MockERC8004ReputationRegistry");
+    const forwarder = await ethers.deployContract("CadenceForwarder");
     await identity.setOwner(7, member.address);
     const registry = await ethers.deployContract("TrustScoreRegistry", [
-      await identity.getAddress(), await reputation.getAddress(), await authorization.getAddress(),
+      await identity.getAddress(), await reputation.getAddress(), await authorization.getAddress(), await forwarder.getAddress(),
     ]);
     await authorization.setKeeper(keeper.address, true);
     await registry.connect(member).linkIdentity(7);

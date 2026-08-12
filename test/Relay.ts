@@ -19,7 +19,7 @@ describe("ERC-2771 relay", function () {
     await token.mint(memberTwo.address, 5_000_000_000n);
     await token.connect(memberTwo).approve(await circle.getAddress(), 5_000_000_000n);
 
-    return { ethers, owner, memberTwo, relayer, token, forwarder, factory, circle, contribution };
+    return { ethers, owner, memberTwo, relayer, token, authorization, forwarder, factory, circle, contribution };
   }
 
   async function signForwardRequest(
@@ -86,5 +86,37 @@ describe("ERC-2771 relay", function () {
 
     expect(await forwarder.connect(relayer).verify(request)).to.equal(false);
     await expect(forwarder.connect(relayer).execute(request)).to.be.reverted;
+  });
+
+  it("never lets a relayed call pass as an authorized keeper, even when the signer is a real keeper", async function () {
+    const { ethers, owner, memberTwo, relayer, token, authorization, forwarder, factory, circle, contribution } = await deployFixture();
+    const [, , , keeper] = await ethers.getSigners();
+    await authorization.setKeeper(keeper.address, true);
+
+    // Fill and start the circle directly (not relayed) so there's a live round to target.
+    // memberTwo was already minted + approved by deployFixture; owner needs the same setup.
+    await token.mint(owner.address, 5_000_000_000n);
+    await token.connect(owner).approve(await circle.getAddress(), 5_000_000_000n);
+    await circle.connect(owner).join();
+    await circle.connect(memberTwo).join();
+    await circle.start();
+    const deadline = await circle.currentRoundDeadline();
+    await time.increaseTo(deadline);
+
+    // A direct call from the keeper's own EOA works — this is the control case.
+    await expect(circle.connect(keeper).checkAndCoverDefault(1, owner.address)).to.not.be.reverted;
+
+    // The same keeper, relaying executePayout through the trusted forwarder, does not: onlyKeeper
+    // deliberately checks raw msg.sender (the forwarder's address once relayed), not _msgSender()
+    // (which would resolve back to the keeper). If this ever passed, the forwarder itself would
+    // need to be an authorized keeper, which would let *anyone* with a keeper's signature — or a
+    // captured relayer — trigger payouts through a channel meant only for member actions.
+    const data = circle.interface.encodeFunctionData("executePayout", [1]);
+    const request = await signForwardRequest(ethers, forwarder, keeper, await circle.getAddress(), data);
+    expect(await forwarder.connect(relayer).verify(request)).to.equal(true); // signature itself is valid
+    await expect(forwarder.connect(relayer).execute(request)).to.be.reverted; // but AjoCircle rejects it
+    expect(await circle.status()).to.equal(1n); // still Active — payout never executed
+
+    void factory;
   });
 });

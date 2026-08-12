@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { formatUnits, zeroAddress, type Address } from "viem";
+import { formatUnits, maxUint256, zeroAddress, type Address } from "viem";
 import { useAccount, useReadContract } from "wagmi";
 import {
-  ArrowRight,
   Check,
   Clock3,
   Copy,
@@ -14,14 +13,14 @@ import {
   Gauge,
   HandCoins,
   LockKeyhole,
-  MoreHorizontal,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
   Zap,
 } from "lucide-react";
 import { ajoCircleAbi, CircleStatus, erc20Abi } from "../lib/contracts";
-import { useCircleDetails } from "../lib/useCircleDetails";
+import { formatWriteError } from "../lib/formatError";
+import { useCircleDetails, type MemberStatus } from "../lib/useCircleDetails";
 import { useSponsoredWrite } from "../lib/useSponsoredWrite";
 
 const AVATAR_COLORS = ["teal", "peach", "violet", "blue", "yellow"] as const;
@@ -37,13 +36,24 @@ function initialsFor(address: string) {
 function statusLabel(status: number | undefined) {
   if (status === CircleStatus.Forming) return "FORMING";
   if (status === CircleStatus.Completed) return "COMPLETED";
+  if (status === CircleStatus.Cancelled) return "CANCELLED";
   return "ACTIVE CIRCLE";
+}
+
+// Same tone vocabulary as the circles list: yellow = waiting, teal = running, violet = done,
+// coral = stopped — so a circle's state reads at a glance instead of only through label text.
+function statusTone(status: number | undefined) {
+  if (status === CircleStatus.Forming) return "yellow";
+  if (status === CircleStatus.Completed) return "violet";
+  if (status === CircleStatus.Cancelled) return "coral";
+  return "teal";
 }
 
 export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
   const { address: myAddress, isConnected } = useAccount();
   const details = useCircleDetails(circleAddress);
-  const [pendingAction, setPendingAction] = useState<"approve" | "contribute" | "start" | "replenish" | "leave" | "cover" | null>(null);
+  const [pendingAction, setPendingAction] = useState<"approve" | "contribute" | "start" | "replenish" | "leave" | "cover" | "cancel" | "withdraw" | null>(null);
+  const [withdrawingSlot, setWithdrawingSlot] = useState<Address | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const { write, error: writeError, isPending, isConfirming, isSuccess, notice } = useSponsoredWrite();
 
@@ -59,10 +69,12 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
     memberStatuses,
     recipient,
     asset,
+    formingDeadline,
     amIMember,
     mySecurityDeposit,
     hasContributedThisRound,
     stalledOn,
+    myWithdrawableSlots,
     refetch,
   } = details;
 
@@ -77,8 +89,9 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
   useEffect(() => {
     if (!isSuccess || !pendingAction) return;
     if (pendingAction === "approve") refetchAllowance();
-    if (pendingAction === "contribute" || pendingAction === "start" || pendingAction === "replenish" || pendingAction === "leave" || pendingAction === "cover") refetch();
+    if (pendingAction === "contribute" || pendingAction === "start" || pendingAction === "replenish" || pendingAction === "leave" || pendingAction === "cover" || pendingAction === "cancel" || pendingAction === "withdraw") refetch();
     setPendingAction(null);
+    setWithdrawingSlot(null);
   }, [isSuccess, pendingAction, refetchAllowance, refetch]);
 
   if (isLoading) {
@@ -124,7 +137,9 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
     if (!isConnected || !asset || status !== CircleStatus.Active) return;
     if (!hasAllowance) {
       setPendingAction("approve");
-      write({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, contributionAmount] });
+      // One max-amount approval instead of a per-round exact one — the only unsponsored, self-paid
+      // step in the flow, so it should cost real gas once per member per circle, not every round.
+      write({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, maxUint256] });
       return;
     }
     setPendingAction("contribute");
@@ -141,7 +156,7 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
     if (!isConnected || !asset || depositShortfall <= 0n) return;
     if ((allowance ?? 0n) < depositShortfall) {
       setPendingAction("approve");
-      write({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, depositShortfall] });
+      write({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, maxUint256] });
       return;
     }
     setPendingAction("replenish");
@@ -154,13 +169,28 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
     write({ address: circleAddress, abi: ajoCircleAbi, functionName: "leave" });
   };
 
+  const formingExpired = status === CircleStatus.Forming && formingDeadline !== undefined && Date.now() >= Number(formingDeadline) * 1000;
+
+  const cancelExpiredCircle = () => {
+    if (!isConnected || !formingExpired) return;
+    setPendingAction("cancel");
+    write({ address: circleAddress, abi: ajoCircleAbi, functionName: "cancelIfExpired" });
+  };
+
+  const withdrawSlot = (member: Address) => {
+    if (!isConnected || (status !== CircleStatus.Cancelled && status !== CircleStatus.Completed)) return;
+    setPendingAction("withdraw");
+    setWithdrawingSlot(member);
+    write({ address: circleAddress, abi: ajoCircleAbi, functionName: "withdrawDeposit", args: [member] });
+  };
+
   const stalledMissing = stalledOn && depositAmount !== undefined ? depositAmount - stalledOn.depositBalance : 0n;
 
   const coverStalledMember = () => {
     if (!isConnected || !asset || !stalledOn || stalledMissing <= 0n) return;
     if ((allowance ?? 0n) < stalledMissing) {
       setPendingAction("approve");
-      write({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, stalledMissing] });
+      write({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, maxUint256] });
       return;
     }
     setPendingAction("cover");
@@ -171,7 +201,7 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
     <>
       <div className="intro-row">
         <div>
-          <div className="eyebrow"><span className="live-dot" /> {statusLabel(status)}</div>
+          <div className={`eyebrow status-tone-${statusTone(status)}`}><span className={`live-dot tone-${statusTone(status)}`} /> {statusLabel(status)}</div>
           <h1>{shortAddress(circleAddress)}</h1>
           <p className="intro-copy">Your shared savings rhythm, onchain and on time.</p>
         </div>
@@ -229,9 +259,70 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
               </div>
             </>
           )}
-          {writeError && <p className="form-error dashboard-error">{writeError.message}</p>}
+          {writeError && <p className="form-error dashboard-error">{formatWriteError(writeError)}</p>}
           {notice && <p className="form-note sponsor-notice">{notice}</p>}
+          {formingExpired && (
+            <div className="stall-banner">
+              <ShieldAlert size={19} />
+              <div>
+                <b>This circle never filled.</b>
+                <p>Its forming window has passed with open seats — anyone can cancel it so every member can reclaim their deposit.</p>
+              </div>
+              <button className="outline-button" onClick={cancelExpiredCircle} disabled={contributeLoading} type="button">
+                {contributeLoading && pendingAction === "cancel" ? "Cancelling…" : "Cancel circle"}
+              </button>
+            </div>
+          )}
         </section>
+      ) : status === CircleStatus.Cancelled ? (
+        <WithdrawPanel
+          icon={<ShieldAlert size={22} />}
+          heading="This circle was cancelled."
+          body="It never filled before its forming deadline. Every posted deposit is waiting to be pulled back by whoever funded it."
+          slots={myWithdrawableSlots}
+          myAddress={myAddress}
+          onWithdraw={withdrawSlot}
+          isWorking={contributeLoading && pendingAction === "withdraw"}
+          workingSlot={withdrawingSlot}
+          writeError={writeError}
+          notice={notice}
+        />
+      ) : status === CircleStatus.Completed ? (
+        <>
+          <WithdrawPanel
+            icon={<ShieldCheck size={22} />}
+            heading="This circle is complete."
+            body="Every member had their round. Any deposit still sitting in the contract — yours, or one you rescued for someone else — is waiting to be pulled back."
+            slots={myWithdrawableSlots}
+            myAddress={myAddress}
+            onWithdraw={withdrawSlot}
+            isWorking={contributeLoading && pendingAction === "withdraw"}
+            workingSlot={withdrawingSlot}
+            writeError={writeError}
+            notice={notice}
+          />
+          <section className="section-card members-card">
+            <div className="section-heading"><div><h3>Final rotation order</h3><p>Locked at circle start — this is exactly what every member agreed to.</p></div><a className="text-button" href={`https://sepolia.basescan.org/address/${circleAddress}`} target="_blank" rel="noreferrer"><Eye size={16} /> View contract</a></div>
+            <div className="member-table">
+              <div className="table-head"><span>MEMBER</span><span>PAYOUT ROUND</span><span /><span /></div>
+              {memberStatuses.map((member, index) => {
+                const isYou = myAddress ? member.address.toLowerCase() === myAddress.toLowerCase() : false;
+                return (
+                  <div className="member-row" key={member.address}>
+                    <div className="member-name">
+                      <span className="order-number">{String(index + 1).padStart(2, "0")}</span>
+                      <div className={`avatar avatar-${AVATAR_COLORS[index % AVATAR_COLORS.length]}`}>{initialsFor(member.address)}</div>
+                      <strong>{shortAddress(member.address)}{isYou && <em>YOU</em>}</strong>
+                    </div>
+                    <div className="date-cell">Round {index + 1}</div>
+                    <div><span className="status covered"><Check size={13} /> Paid out</span></div>
+                    <a className="more-button" href={`https://sepolia.basescan.org/address/${member.address}`} target="_blank" rel="noreferrer" aria-label={`View ${shortAddress(member.address)} on BaseScan`}><Eye size={17} /></a>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        </>
       ) : (
         <>
           <section className="hero-card">
@@ -265,7 +356,7 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
                 </button>
               )}
             </div>
-            {writeError && <p className="form-error dashboard-error">{writeError.message}</p>}
+            {writeError && <p className="form-error dashboard-error">{formatWriteError(writeError)}</p>}
           {notice && <p className="form-note sponsor-notice">{notice}</p>}
           </section>
 
@@ -305,7 +396,7 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
                     </div>
                     <div><span className={`status ${memberStatus.toLowerCase()}`}>{memberStatus === "Paid" && <Check size={13} />}{memberStatus}</span></div>
                     <div className="date-cell">Round {index + 1}</div>
-                    <button className="more-button" aria-label={`More options for ${shortAddress(member.address)}`}><MoreHorizontal size={19} /></button>
+                    <a className="more-button" href={`https://sepolia.basescan.org/address/${member.address}`} target="_blank" rel="noreferrer" aria-label={`View ${shortAddress(member.address)} on BaseScan`}><Eye size={17} /></a>
                   </div>
                 );
               })}
@@ -315,5 +406,60 @@ export function CircleDashboard({ circleAddress }: { circleAddress: Address }) {
         </>
       )}
     </>
+  );
+}
+
+/// Shown for Cancelled and Completed circles — the only two states where a member (or a rescuer
+/// who covered someone else's default) can pull a deposit balance back out, one slot at a time.
+function WithdrawPanel({
+  icon,
+  heading,
+  body,
+  slots,
+  myAddress,
+  onWithdraw,
+  isWorking,
+  workingSlot,
+  writeError,
+  notice,
+}: {
+  icon: React.ReactNode;
+  heading: string;
+  body: string;
+  slots: MemberStatus[];
+  myAddress: Address | undefined;
+  onWithdraw: (member: Address) => void;
+  isWorking: boolean;
+  workingSlot: Address | null;
+  writeError: Error | null;
+  notice: string | null;
+}) {
+  return (
+    <section className="dashboard-empty">
+      <div className="dashboard-empty-icon">{icon}</div>
+      <h3>{heading}</h3>
+      <p>{body}</p>
+      {slots.length === 0 ? (
+        <p className="muted">Nothing left for your wallet to withdraw here.</p>
+      ) : (
+        <div className="review-list" style={{ width: "100%", maxWidth: 420, marginTop: 18, textAlign: "left" }}>
+          {slots.map((slot) => {
+            const isOwnSlot = myAddress ? slot.address.toLowerCase() === myAddress.toLowerCase() : false;
+            const working = isWorking && workingSlot?.toLowerCase() === slot.address.toLowerCase();
+            return (
+              <div key={slot.address}>
+                <span>{isOwnSlot ? "YOUR DEPOSIT" : `RESCUED FOR ${shortAddress(slot.address)}`}</span>
+                <strong>{formatUnits(slot.depositBalance, 6)} USDC</strong>
+                <button className="solid-button" onClick={() => onWithdraw(slot.address)} disabled={isWorking} type="button">
+                  {working ? "Withdrawing…" : "Withdraw"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {writeError && <p className="form-error dashboard-error">{formatWriteError(writeError)}</p>}
+      {notice && <p className="form-note sponsor-notice">{notice}</p>}
+    </section>
   );
 }

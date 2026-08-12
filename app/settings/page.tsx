@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useAccount, useDisconnect } from "wagmi";
+import { useAccount, useDisconnect, useSignMessage } from "wagmi";
 import { AppShell } from "../../components/AppShell";
 import { Bell, Check, Copy, ExternalLink, ShieldCheck, WalletCards } from "lucide-react";
 
@@ -11,6 +11,7 @@ function shortAddress(address: string) {
 export default function SettingsPage() {
   const { address, isConnected, chain } = useAccount();
   const { disconnect } = useDisconnect();
+  const { signMessageAsync } = useSignMessage();
   const [copied, setCopied] = useState(false);
   const [emailRemindersEnabled, setEmailRemindersEnabled] = useState(true);
   const [reminderSaveError, setReminderSaveError] = useState(false);
@@ -19,23 +20,42 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!address) return;
+    let cancelled = false;
     setSaveState("loading");
-    fetch(`/api/member-email?address=${address}`)
-      .then((res) => res.json())
-      .then((data) => {
+    (async () => {
+      try {
+        // Proves wallet control before the server hands back anything tied to this address —
+        // otherwise anyone could read another member's stored email just by knowing their wallet.
+        const timestamp = Date.now();
+        const message = `Cadence settings read\naddress: ${address}\ntimestamp: ${timestamp}`;
+        const signature = await signMessageAsync({ message });
+        if (cancelled) return;
+        const res = await fetch(`/api/member-email?address=${address}&timestamp=${timestamp}&signature=${signature}`);
+        const data = await res.json();
+        if (cancelled) return;
         setEmail(data.email ?? "");
         setEmailRemindersEnabled(data.emailRemindersEnabled ?? true);
         setSaveState("idle");
-      })
-      .catch(() => setSaveState("idle"));
-  }, [address]);
+      } catch {
+        if (!cancelled) setSaveState("idle");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, signMessageAsync]);
 
   const persist = async (nextEmail: string, nextRemindersEnabled: boolean) => {
     if (!address) return;
+    const timestamp = Date.now();
+    // The signed message binds the exact values being saved, so a captured signature can never
+    // be replayed to write something the owner didn't actually approve.
+    const message = `Cadence settings update\naddress: ${address}\nemail: ${nextEmail || "(none)"}\nemailRemindersEnabled: ${nextRemindersEnabled}\ntimestamp: ${timestamp}`;
+    const signature = await signMessageAsync({ message });
     const res = await fetch("/api/member-email", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address, email: nextEmail, emailRemindersEnabled: nextRemindersEnabled }),
+      body: JSON.stringify({ address, email: nextEmail, emailRemindersEnabled: nextRemindersEnabled, signature, timestamp }),
     });
     if (!res.ok) throw new Error("save failed");
   };

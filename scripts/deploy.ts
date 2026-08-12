@@ -17,19 +17,27 @@ async function main() {
   await keeperAuthorization.waitForDeployment();
   await (await keeperAuthorization.setKeeper(keeperWallet, true)).wait();
 
+  const forwarder = await ethers.deployContract("CadenceForwarder");
+  await forwarder.waitForDeployment();
+
   const trustScoreRegistry = await ethers.deployContract("TrustScoreRegistry", [
     identityRegistry,
     reputationRegistry,
     await keeperAuthorization.getAddress(),
+    await forwarder.getAddress(),
   ]);
   await trustScoreRegistry.waitForDeployment();
 
-  const circleFactory = await ethers.deployContract("CircleFactory", [await keeperAuthorization.getAddress()]);
+  const circleFactory = await ethers.deployContract("CircleFactory", [
+    await keeperAuthorization.getAddress(),
+    await forwarder.getAddress(),
+  ]);
   await circleFactory.waitForDeployment();
 
   console.table({
     deployer: deployer.address,
     keeperAuthorization: await keeperAuthorization.getAddress(),
+    forwarder: await forwarder.getAddress(),
     trustScoreRegistry: await trustScoreRegistry.getAddress(),
     circleFactory: await circleFactory.getAddress(),
   });

@@ -10,6 +10,7 @@ export type MemberStatus = {
   contributed: boolean;
   covered: boolean;
   depositBalance: bigint;
+  depositOwner: Address;
   isYou: boolean;
 };
 
@@ -29,11 +30,12 @@ export function useCircleDetails(circleAddress: Address | undefined) {
       { address: circle, abi: ajoCircleAbi, functionName: "targetMemberCount" },
       { address: circle, abi: ajoCircleAbi, functionName: "getMembers" },
       { address: circle, abi: ajoCircleAbi, functionName: "asset" },
+      { address: circle, abi: ajoCircleAbi, functionName: "formingDeadline" },
     ],
     query: { enabled },
   });
 
-  const [statusR, roundR, deadlineR, fundingR, contribR, depositR, targetR, membersR, assetR] = coreResults ?? [];
+  const [statusR, roundR, deadlineR, fundingR, contribR, depositR, targetR, membersR, assetR, formingDeadlineR] = coreResults ?? [];
 
   const status = statusR?.status === "success" ? Number(statusR.result) : undefined;
   const currentRound = roundR?.status === "success" ? (roundR.result as bigint) : undefined;
@@ -44,6 +46,7 @@ export function useCircleDetails(circleAddress: Address | undefined) {
   const targetMemberCount = targetR?.status === "success" ? (targetR.result as bigint) : undefined;
   const members = membersR?.status === "success" ? (membersR.result as Address[]) : undefined;
   const asset = assetR?.status === "success" ? (assetR.result as Address) : undefined;
+  const formingDeadline = formingDeadlineR?.status === "success" ? (formingDeadlineR.result as bigint) : undefined;
 
   const recipientIndex = currentRound !== undefined && currentRound > 0n ? Number(currentRound) - 1 : undefined;
   const recipient = members && recipientIndex !== undefined ? members[recipientIndex] : undefined;
@@ -55,6 +58,7 @@ export function useCircleDetails(circleAddress: Address | undefined) {
             { address: circle, abi: ajoCircleAbi, functionName: "contributed", args: [currentRound, member] as const },
             { address: circle, abi: ajoCircleAbi, functionName: "defaultCovered", args: [currentRound, member] as const },
             { address: circle, abi: ajoCircleAbi, functionName: "securityDepositBalance", args: [member] as const },
+            { address: circle, abi: ajoCircleAbi, functionName: "depositOwner", args: [member] as const },
           ]
         : [],
     ),
@@ -64,18 +68,30 @@ export function useCircleDetails(circleAddress: Address | undefined) {
   const memberStatuses: MemberStatus[] = useMemo(() => {
     if (!members || currentRound === undefined) return [];
     return members.map((member, index) => {
-      const contributedResult = memberStatusResults?.[index * 3];
-      const coveredResult = memberStatusResults?.[index * 3 + 1];
-      const depositResult = memberStatusResults?.[index * 3 + 2];
+      const contributedResult = memberStatusResults?.[index * 4];
+      const coveredResult = memberStatusResults?.[index * 4 + 1];
+      const depositResult = memberStatusResults?.[index * 4 + 2];
+      const depositOwnerResult = memberStatusResults?.[index * 4 + 3];
       return {
         address: member,
         contributed: contributedResult?.status === "success" ? Boolean(contributedResult.result) : false,
         covered: coveredResult?.status === "success" ? Boolean(coveredResult.result) : false,
         depositBalance: depositResult?.status === "success" ? (depositResult.result as bigint) : 0n,
+        depositOwner: depositOwnerResult?.status === "success" ? (depositOwnerResult.result as Address) : member,
         isYou: address ? member.toLowerCase() === address.toLowerCase() : false,
       };
     });
   }, [members, currentRound, memberStatusResults, address]);
+
+  // Deposit slots the connected wallet can pull funds from once the circle is Cancelled or
+  // Completed — normally just their own slot, but also anyone else's slot they rescued via
+  // coverDeposit() and never got automatically reimbursed for (see depositOwner on the contract).
+  const myWithdrawableSlots = useMemo(() => {
+    if (!address) return [];
+    return memberStatuses.filter(
+      (member) => member.depositBalance > 0n && member.depositOwner.toLowerCase() === address.toLowerCase(),
+    );
+  }, [memberStatuses, address]);
 
   // A round is stalled (not just "waiting") when it's past its deadline, not fully
   // funded, and at least one unpaid member's deposit can't cover their contribution —
@@ -129,9 +145,11 @@ export function useCircleDetails(circleAddress: Address | undefined) {
     memberStatuses,
     recipient,
     asset,
+    formingDeadline,
     amIMember: Boolean(amIMember),
     mySecurityDeposit: mySecurityDeposit as bigint | undefined,
     hasContributedThisRound: Boolean(myStatus?.contributed),
     stalledOn,
+    myWithdrawableSlots,
   };
 }

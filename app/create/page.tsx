@@ -7,6 +7,7 @@ import { useAccount } from "wagmi";
 import { ArrowRight, Check, Copy } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { cadenceContracts, circleFactoryAbi } from "@/lib/contracts";
+import { formatWriteError } from "@/lib/formatError";
 import { useSponsoredWrite } from "@/lib/useSponsoredWrite";
 
 const steps = ["Circle basics", "Contribution terms", "Review & deploy"];
@@ -195,7 +196,7 @@ export default function CreateCirclePage() {
               {!cadenceContracts.isConfigured && <p className="form-error">Add the deployed contract addresses to your environment before creating a circle.</p>}
               {!isConnected && <p className="form-error">Connect the Base Sepolia wallet that will create the circle.</p>}
               {configurationError && <p className="form-error">{configurationError}</p>}
-              {error && <p className="form-error">{error.message}</p>}
+              {error && <p className="form-error">{formatWriteError(error)}</p>}
               {notice && <p className="form-note sponsor-notice">{notice}</p>}
               {isSuccess && (
                 <div className="form-success">

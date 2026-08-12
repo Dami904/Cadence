@@ -1,13 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAddress } from "viem";
+import { isAddress, verifyMessage, type Address } from "viem";
 import { getSql } from "@/lib/db";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Signatures only prove wallet control for a short window, so a captured signature can't be
+// replayed indefinitely to keep re-reading or re-writing someone else's reminder settings.
+const SIGNATURE_FRESHNESS_MS = 5 * 60 * 1000;
+
+function readMessage(address: Address, timestamp: number) {
+  return `Cadence settings read\naddress: ${address}\ntimestamp: ${timestamp}`;
+}
+
+function writeMessage(address: Address, email: string, emailRemindersEnabled: boolean, timestamp: number) {
+  return `Cadence settings update\naddress: ${address}\nemail: ${email || "(none)"}\nemailRemindersEnabled: ${emailRemindersEnabled}\ntimestamp: ${timestamp}`;
+}
+
+async function verifyFresh(address: Address, message: string, signature: unknown, timestamp: unknown) {
+  if (typeof signature !== "string" || !signature.startsWith("0x")) return false;
+  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) return false;
+  if (Math.abs(Date.now() - timestamp) > SIGNATURE_FRESHNESS_MS) return false;
+  return verifyMessage({ address, message, signature: signature as `0x${string}` });
+}
 
 export async function GET(request: NextRequest) {
   const address = request.nextUrl.searchParams.get("address");
+  const signature = request.nextUrl.searchParams.get("signature");
+  const timestampRaw = request.nextUrl.searchParams.get("timestamp");
+  const timestamp = timestampRaw ? Number(timestampRaw) : NaN;
+
   if (!address || !isAddress(address)) {
     return NextResponse.json({ error: "Invalid address" }, { status: 400 });
+  }
+  // Proves the caller controls this wallet before returning anything tied to it — without this,
+  // any visitor could read another member's stored email off their address alone.
+  const isValid = await verifyFresh(address, readMessage(address, timestamp), signature, timestamp).catch(() => false);
+  if (!isValid) {
+    return NextResponse.json({ error: "Sign a fresh request to view these settings." }, { status: 401 });
   }
 
   const sql = getSql();
@@ -25,6 +53,8 @@ export async function POST(request: NextRequest) {
   const address = body?.address;
   const email = body?.email;
   const emailRemindersEnabled = body?.emailRemindersEnabled;
+  const signature = body?.signature;
+  const timestamp = body?.timestamp;
 
   if (!address || !isAddress(address)) {
     return NextResponse.json({ error: "Invalid address" }, { status: 400 });
@@ -34,6 +64,18 @@ export async function POST(request: NextRequest) {
   }
   if (typeof emailRemindersEnabled !== "boolean") {
     return NextResponse.json({ error: "Invalid emailRemindersEnabled" }, { status: 400 });
+  }
+  // The signed message binds the exact values being written, not just the address, so a captured
+  // signature can only ever replay the same settings the owner actually approved — it can't be
+  // reused to write something different.
+  const isValid = await verifyFresh(
+    address,
+    writeMessage(address, typeof email === "string" ? email : "", emailRemindersEnabled, timestamp),
+    signature,
+    timestamp,
+  ).catch(() => false);
+  if (!isValid) {
+    return NextResponse.json({ error: "Sign a fresh request to update these settings." }, { status: 401 });
   }
 
   const sql = getSql();

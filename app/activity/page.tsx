@@ -1,7 +1,7 @@
 "use client";
 
 import { AppShell } from "../../components/AppShell";
-import { ArrowUpRight, Check, CircleDollarSign, HeartHandshake, LockKeyhole, LogOut, ShieldCheck, UsersRound } from "lucide-react";
+import { ArrowUpRight, Check, CircleDollarSign, HeartHandshake, LockKeyhole, LogOut, ShieldAlert, ShieldCheck, UsersRound } from "lucide-react";
 import { useActivityFeed, type ActivityEntry } from "../../lib/useActivityFeed";
 
 // Only these two AjoCircle functions are gated onlyKeeper (see contracts/AjoCircle.sol),
@@ -11,13 +11,16 @@ const workflowFor: Partial<Record<ActivityEntry["kind"], string>> = {
   "Payout": "Cadence Payout Execution",
   "Circle completed": "Cadence Payout Execution",
   "Default covered": "Cadence Default Detection + Deposit Draw",
+  "Default uncovered": "Cadence Default Detection + Deposit Draw",
 };
 
 const kindIcon: Record<ActivityEntry["kind"], typeof Check> = {
   "Contribution": Check,
   "Default covered": ShieldCheck,
+  "Default uncovered": ShieldAlert,
   "Payout": CircleDollarSign,
   "Circle completed": Check,
+  "Circle cancelled": ShieldAlert,
   "Member joined": UsersRound,
   "Member left": LogOut,
   "Deposit replenished": ShieldCheck,
@@ -28,8 +31,10 @@ const kindIcon: Record<ActivityEntry["kind"], typeof Check> = {
 const kindTone: Record<ActivityEntry["kind"], string> = {
   "Contribution": "teal",
   "Default covered": "coral",
+  "Default uncovered": "coral",
   "Payout": "yellow",
   "Circle completed": "violet",
+  "Circle cancelled": "coral",
   "Member joined": "violet",
   "Member left": "coral",
   "Deposit replenished": "teal",
@@ -68,7 +73,7 @@ function groupByDate(entries: ActivityEntry[]) {
 }
 
 export default function ActivityPage() {
-  const { entries, isLoading } = useActivityFeed();
+  const { entries, isLoading, error } = useActivityFeed();
   const groups = groupByDate(entries);
   const contributionsMade = entries.filter((entry) => entry.kind === "Contribution" && entry.isYou).length;
   const payoutsReceived = entries.filter((entry) => entry.kind === "Payout" && entry.isYou).length;
@@ -85,7 +90,8 @@ export default function ActivityPage() {
       <section className="activity-layout">
         <div className="activity-feed">
           {isLoading && <p className="date-divider">LOADING…</p>}
-          {!isLoading && entries.length === 0 && <p className="date-divider">No onchain activity yet for your circles.</p>}
+          {!isLoading && error && <p className="form-error dashboard-error">Couldn&apos;t load activity from the chain — {error.message}</p>}
+          {!isLoading && !error && entries.length === 0 && <p className="date-divider">No onchain activity yet for your circles.</p>}
           {groups.map((group) => (
             <div key={group.label}>
               <p className="date-divider">{group.label}</p>

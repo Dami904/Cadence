@@ -101,11 +101,16 @@ export function useTrustScore(targetAddress?: Address) {
 
   const completions = useMemo(() => outcomes.filter((o) => o.tag === TRUST_SCORE_TAGS.completion).length, [outcomes]);
   const defaults = useMemo(() => outcomes.filter((o) => o.tag === TRUST_SCORE_TAGS.default).length, [outcomes]);
-  // No recorded outcomes yet reads as a neutral 100, not a penalty for having no history.
+  // Built from each outcome's actual ERC-8004 feedback value (currently always +100/-100 per
+  // AjoCircle.sol, but this reads the real number rather than assuming that magnitude) — a net
+  // value of 0 sits at the midpoint, +100*count maxes at 100, -100*count floors at 0. No recorded
+  // outcomes yet reads as a neutral 100, not a penalty for having no history.
   const score = useMemo(() => {
     const total = completions + defaults;
-    return total === 0 ? 100 : Math.round((completions / total) * 100);
-  }, [completions, defaults]);
+    if (total === 0) return 100;
+    const netValue = outcomes.reduce((sum, o) => sum + Number(o.value), 0);
+    return Math.min(100, Math.max(0, Math.round(50 + netValue / (2 * total))));
+  }, [completions, defaults, outcomes]);
   const mostRecent = outcomes[0];
 
   const refetchLinked = useCallback(() => {

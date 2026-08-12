@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ERC2771Context} from "@openzeppelin/contracts/metatx/ERC2771Context.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IKeeperAuthorization} from "./interfaces/IKeeperAuthorization.sol";
 import {ICircleFactoryRegistry} from "./interfaces/ICircleFactoryRegistry.sol";
 
@@ -12,7 +13,7 @@ import {ICircleFactoryRegistry} from "./interfaces/ICircleFactoryRegistry.sol";
 /// isn't a blocker for wallets that aren't sponsored by a smart-account paymaster. checkAndCoverDefault
 /// and executePayout deliberately keep raw msg.sender (via onlyKeeper) — relayed calls can never pass
 /// as an authorized keeper, since the forwarder itself is never granted keeper status.
-contract AjoCircle is ERC2771Context {
+contract AjoCircle is ERC2771Context, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     enum Status { Forming, Active, Completed, Cancelled }
@@ -36,6 +37,11 @@ contract AjoCircle is ERC2771Context {
     address[] private members;
     mapping(address => bool) public isMember;
     mapping(address => uint256) public securityDepositBalance;
+    /// @dev Who gets a member's deposit balance back. Defaults to the member themselves; becomes
+    /// the rescuer's address when coverDeposit() fully tops the balance back up on their behalf,
+    /// since replenishDeposit()/coverDeposit() always restore the full missing amount in one call
+    /// (no partial top-ups), so exactly one address is ever owed the resulting balance at a time.
+    mapping(address => address) public depositOwner;
     mapping(uint256 => mapping(address => bool)) public contributed;
     mapping(uint256 => mapping(address => bool)) public defaultCovered;
 
@@ -65,6 +71,7 @@ contract AjoCircle is ERC2771Context {
     error FundingIncomplete();
     error NothingToCover();
     error NothingToWithdraw();
+    error NotDepositOwner();
 
     constructor(
         address asset_,
@@ -79,6 +86,13 @@ contract AjoCircle is ERC2771Context {
         uint256 formingDeadline_,
         address trustedForwarder_
     ) ERC2771Context(trustedForwarder_) {
+        // Deposit floor is 2x contributionAmount, not the 1x "one-round deposit" the build spec's
+        // prose describes — spec section 10 flagged the exact deposit size as an open question
+        // that should be decided explicitly rather than invented, and this is that decision: 2x
+        // survives two consecutive missed rounds instead of one before a member's protection runs
+        // out, which the frontend's create-circle flow discloses to every creator up front
+        // ("posts a security deposit worth two contributions"). Kept as-is rather than silently
+        // changed, since it's a disclosed product choice, not a hidden defect.
         if (
             asset_ == address(0) || keeperAuthorization_ == address(0) || factory_ == address(0) || creator_ == address(0) || contributionAmount_ == 0 ||
             depositAmount_ < 2 * contributionAmount_ || targetMemberCount_ < 2 || roundDuration_ == 0 ||
@@ -108,7 +122,7 @@ contract AjoCircle is ERC2771Context {
         _;
     }
 
-    function join() external {
+    function join() external nonReentrant {
         address member = _msgSender();
         if (status != Status.Forming) revert InvalidStatus();
         if (isMember[member]) revert AlreadyMember();
@@ -117,13 +131,14 @@ contract AjoCircle is ERC2771Context {
         isMember[member] = true;
         members.push(member);
         securityDepositBalance[member] = depositAmount;
+        depositOwner[member] = member;
         asset.safeTransferFrom(member, address(this), depositAmount);
         emit MemberJoined(member, members.length, depositAmount);
     }
 
     /// @notice Exit and reclaim your deposit while the circle is still filling. No lock-in
     /// before rotation order is even set — once `start()` locks it, this is no longer available.
-    function leave() external onlyMember {
+    function leave() external onlyMember nonReentrant {
         address member = _msgSender();
         if (status != Status.Forming) revert InvalidStatus();
 
@@ -146,16 +161,18 @@ contract AjoCircle is ERC2771Context {
         emit CircleCancelled();
     }
 
-    /// @notice Pull-pattern refund after cancellation — each member withdraws their own deposit
-    /// rather than one call looping refunds to everyone, so a single failing transfer can't
-    /// block the rest.
-    function withdrawAfterCancel() external onlyMember {
-        address member = _msgSender();
-        if (status != Status.Cancelled) revert InvalidStatus();
+    /// @notice Pull-pattern refund after cancellation or completion — whoever owns a member's
+    /// deposit balance (see depositOwner: normally the member, or a rescuer who last covered a
+    /// default for them) withdraws it themselves. Callable per-slot rather than looping over all
+    /// members in one transaction, so a single blocked/reverting recipient can never hold up
+    /// anyone else's refund, or — at completion — the payout itself.
+    function withdrawDeposit(address member) external nonReentrant {
+        if (status != Status.Cancelled && status != Status.Completed) revert InvalidStatus();
+        if (depositOwner[member] != _msgSender()) revert NotDepositOwner();
         uint256 amount = securityDepositBalance[member];
         if (amount == 0) revert NothingToWithdraw();
         securityDepositBalance[member] = 0;
-        asset.safeTransfer(member, amount);
+        asset.safeTransfer(_msgSender(), amount);
         emit DepositReturned(member, amount);
     }
 
@@ -169,7 +186,7 @@ contract AjoCircle is ERC2771Context {
         emit CircleStarted(currentRound, currentRoundDeadline);
     }
 
-    function contribute() external onlyMember {
+    function contribute() external onlyMember nonReentrant {
         address member = _msgSender();
         if (status != Status.Active) revert InvalidStatus();
         if (block.timestamp >= currentRoundDeadline) revert ContributionWindowClosed();
@@ -182,11 +199,14 @@ contract AjoCircle is ERC2771Context {
     }
 
     /// @notice Allows a member to restore their own one-round protection after it was used.
-    function replenishDeposit() external onlyMember {
+    /// Reclaims deposit ownership for themselves, even if a rescuer had most recently funded it.
+    function replenishDeposit() external onlyMember nonReentrant {
         address member = _msgSender();
+        if (status != Status.Active) revert InvalidStatus();
         uint256 missing = depositAmount - securityDepositBalance[member];
         if (missing == 0) revert NothingToCover();
         securityDepositBalance[member] = depositAmount;
+        depositOwner[member] = member;
         asset.safeTransferFrom(member, address(this), missing);
         emit DepositReplenished(member, missing);
     }
@@ -195,12 +215,17 @@ contract AjoCircle is ERC2771Context {
     /// payer's own wallet. Exists so one member missing two rounds in a row (deposit drawn to
     /// zero, then defaulting again with nothing left to draw) doesn't permanently stall every
     /// other member's payouts — without granting any single address unilateral override power.
-    function coverDeposit(address member) external onlyMember {
+    /// The payer becomes the owner of that deposit balance (see depositOwner) and reclaims it
+    /// via withdrawDeposit() once the circle finishes if it's never drawn down again — they are
+    /// never left permanently out of pocket for rescuing another member's protection.
+    function coverDeposit(address member) external onlyMember nonReentrant {
         address payer = _msgSender();
+        if (status != Status.Active) revert InvalidStatus();
         if (!isMember[member]) revert MemberOnly();
         uint256 missing = depositAmount - securityDepositBalance[member];
         if (missing == 0) revert NothingToCover();
         securityDepositBalance[member] = depositAmount;
+        depositOwner[member] = payer;
         asset.safeTransferFrom(payer, address(this), missing);
         emit DepositCovered(payer, member, missing);
     }
@@ -221,7 +246,7 @@ contract AjoCircle is ERC2771Context {
         emit DefaultCovered(round, member, contributionAmount);
     }
 
-    function executePayout(uint256 round) external onlyKeeper {
+    function executePayout(uint256 round) external onlyKeeper nonReentrant {
         if (status != Status.Active || round != currentRound) revert InvalidStatus();
         if (block.timestamp < currentRoundDeadline) revert DeadlineNotReached();
         uint256 pot = contributionAmount * targetMemberCount;
@@ -235,7 +260,6 @@ contract AjoCircle is ERC2771Context {
         if (round == targetMemberCount) {
             status = Status.Completed;
             factory.onCircleStatusChanged(uint8(status));
-            _returnAllDeposits();
             emit CircleCompleted(round);
             return;
         }
@@ -252,20 +276,6 @@ contract AjoCircle is ERC2771Context {
                 members.pop();
                 return;
             }
-        }
-    }
-
-    /// @notice Every member's remaining deposit is only ever needed to protect rounds still to
-    /// come — once the final payout ships there are none left, so it goes back to its owner.
-    function _returnAllDeposits() private {
-        uint256 len = members.length;
-        for (uint256 i = 0; i < len; i++) {
-            address member = members[i];
-            uint256 balance = securityDepositBalance[member];
-            if (balance == 0) continue;
-            securityDepositBalance[member] = 0;
-            asset.safeTransfer(member, balance);
-            emit DepositReturned(member, balance);
         }
     }
 

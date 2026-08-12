@@ -4,6 +4,11 @@ import { baseSepolia } from "viem/chains";
 import { getSql } from "@/lib/db";
 import { cadenceContracts, circleFactoryAbi, forwarderAbi } from "@/lib/contracts";
 
+const TRUST_SCORE_SELECTORS = new Set([
+  toFunctionSelector("linkIdentity(uint256)"),
+  toFunctionSelector("unlinkIdentity()"),
+]);
+
 const RATE_LIMIT_PER_DAY = 20;
 const MAX_REQUEST_GAS = 500_000n;
 const KEEPERHUB_WAIT_TIMEOUT_MS = 30_000;
@@ -18,11 +23,12 @@ const SPONSORED_SELECTORS = new Set([
   toFunctionSelector("join()"),
   toFunctionSelector("leave()"),
   toFunctionSelector("cancelIfExpired()"),
-  toFunctionSelector("withdrawAfterCancel()"),
+  toFunctionSelector("withdrawDeposit(address)"),
   toFunctionSelector("contribute()"),
   toFunctionSelector("start()"),
   toFunctionSelector("replenishDeposit()"),
   toFunctionSelector("coverDeposit(address)"),
+  ...TRUST_SCORE_SELECTORS,
 ]);
 
 const publicClient = createPublicClient({ chain: baseSepolia, transport: http(process.env.BASE_SEPOLIA_RPC_URL) });
@@ -72,7 +78,16 @@ export async function POST(request: NextRequest) {
   }
 
   const isFactory = to.toLowerCase() === cadenceContracts.circleFactory.toLowerCase();
-  if (!isFactory) {
+  const isTrustScoreRegistry = to.toLowerCase() === cadenceContracts.trustScoreRegistry.toLowerCase();
+  if (isFactory) {
+    if (selector !== toFunctionSelector(CREATE_CIRCLE_SIGNATURE)) {
+      return NextResponse.json({ error: "That action isn't valid on the factory" }, { status: 400 });
+    }
+  } else if (isTrustScoreRegistry) {
+    if (!TRUST_SCORE_SELECTORS.has(selector)) {
+      return NextResponse.json({ error: "That action isn't valid on the trust score registry" }, { status: 400 });
+    }
+  } else {
     const isCircle = await publicClient.readContract({
       address: cadenceContracts.circleFactory,
       abi: circleFactoryAbi,
@@ -82,18 +97,38 @@ export async function POST(request: NextRequest) {
     if (!isCircle) {
       return NextResponse.json({ error: "Target isn't a Cadence contract" }, { status: 400 });
     }
-  } else if (selector !== toFunctionSelector(CREATE_CIRCLE_SIGNATURE)) {
-    return NextResponse.json({ error: "That action isn't valid on the factory" }, { status: 400 });
+    if (TRUST_SCORE_SELECTORS.has(selector)) {
+      return NextResponse.json({ error: "That action isn't valid on a circle" }, { status: 400 });
+    }
   }
 
   const sql = getSql();
-  const [{ count }] = (await sql`
-    SELECT COUNT(*)::int AS count FROM relay_requests
-    WHERE wallet_address = ${from.toLowerCase()} AND created_at > now() - interval '24 hours'
-  `) as { count: number }[];
-  if (count >= RATE_LIMIT_PER_DAY) {
+  // Reserving a slot is one atomic statement — the count-check and insert happen in the same
+  // round trip, so two concurrent requests from the same wallet can't both read a count below
+  // the limit and both insert before either commits (the gap that mattered here, since the
+  // actual relay call below can take up to 30s). tx_hash starts NULL and is filled in on success,
+  // or the reservation is deleted below if the relay never completes — a failed attempt never
+  // counted against the wallet's daily limit before, and still doesn't.
+  const [reservation] = (await sql`
+    WITH recent AS (
+      SELECT COUNT(*)::int AS count FROM relay_requests
+      WHERE wallet_address = ${from.toLowerCase()} AND created_at > now() - interval '24 hours'
+    )
+    INSERT INTO relay_requests (wallet_address, tx_hash)
+    SELECT ${from.toLowerCase()}, NULL FROM recent WHERE recent.count < ${RATE_LIMIT_PER_DAY}
+    RETURNING id
+  `) as { id: number }[];
+  if (!reservation) {
     return NextResponse.json({ error: "Sponsored-gas limit reached for this wallet today — try again later or use your own gas." }, { status: 429 });
   }
+  const reservationId = reservation.id;
+  // Any path below that doesn't end in a real tx hash releases the reservation, so a failed
+  // attempt (bad signature, webhook down, KeeperHub timeout, etc.) never eats into the wallet's
+  // daily sponsored-gas quota — matching the original behavior where only successes were logged.
+  const fail = async (error: string, status: number) => {
+    await sql`DELETE FROM relay_requests WHERE id = ${reservationId}`;
+    return NextResponse.json({ error }, { status });
+  };
 
   const forwardRequest = { from, to, value: valueBig, gas: gasBig, deadline: Number(deadlineBig), data, signature };
 
@@ -104,7 +139,7 @@ export async function POST(request: NextRequest) {
     args: [forwardRequest],
   });
   if (!isValid) {
-    return NextResponse.json({ error: "Request signature is invalid or expired" }, { status: 400 });
+    return fail("Request signature is invalid or expired", 400);
   }
 
   // The KeeperHub webhook trigger's own output wraps everything under a top-level "data" key, so a
@@ -126,11 +161,11 @@ export async function POST(request: NextRequest) {
       }),
     });
     if (!triggerResponse.ok) {
-      return NextResponse.json({ error: "Relay submission failed" }, { status: 502 });
+      return await fail("Relay submission failed", 502);
     }
     ({ executionId } = (await triggerResponse.json()) as { executionId: string });
   } catch {
-    return NextResponse.json({ error: "Relay submission failed" }, { status: 502 });
+    return await fail("Relay submission failed", 502);
   }
 
   let result: KeeperHubWaitResponse;
@@ -140,20 +175,20 @@ export async function POST(request: NextRequest) {
       { headers: { Authorization: `Bearer ${orgApiKey}` } },
     );
     if (!waitResponse.ok) {
-      return NextResponse.json({ error: "Relay execution failed" }, { status: 502 });
+      return await fail("Relay execution failed", 502);
     }
     result = (await waitResponse.json()) as KeeperHubWaitResponse;
   } catch {
-    return NextResponse.json({ error: "Relay execution failed" }, { status: 502 });
+    return await fail("Relay execution failed", 502);
   }
 
   if (!result.completed || result.status !== "success" || result.transactionHashes.length === 0) {
-    return NextResponse.json({ error: result.error ?? "Relay execution failed" }, { status: 502 });
+    return await fail(result.error ?? "Relay execution failed", 502);
   }
 
   const hash = result.transactionHashes[0].hash;
 
-  await sql`INSERT INTO relay_requests (wallet_address, tx_hash) VALUES (${from.toLowerCase()}, ${hash})`;
+  await sql`UPDATE relay_requests SET tx_hash = ${hash} WHERE id = ${reservationId}`;
 
   return NextResponse.json({ hash });
 }

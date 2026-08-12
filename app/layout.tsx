@@ -9,7 +9,12 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    // WalletConnect's connector writes --wcm-* CSS custom properties onto <html> as soon as it
+    // initializes on the client, before React finishes hydrating — the mismatch is real (SSR
+    // genuinely can't know those values) and unavoidable short of not using WalletConnect, so
+    // this is the documented React/Next.js escape hatch for a legitimate third-party client-only
+    // mutation, not a workaround for an actual app bug.
+    <html lang="en" suppressHydrationWarning>
       <body><Providers>{children}</Providers></body>
     </html>
   );

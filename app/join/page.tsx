@@ -3,11 +3,12 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { formatUnits, isAddress, zeroAddress, type Address } from "viem";
+import { formatUnits, isAddress, maxUint256, zeroAddress, type Address } from "viem";
 import { useAccount, useReadContract } from "wagmi";
 import { ArrowRight, Check, LockKeyhole, ShieldCheck, UsersRound } from "lucide-react";
 import { AppShell } from "../../components/AppShell";
 import { ajoCircleAbi, erc20Abi } from "../../lib/contracts";
+import { formatWriteError } from "../../lib/formatError";
 import { useSponsoredWrite } from "../../lib/useSponsoredWrite";
 import { useTrustScore } from "../../lib/useTrustScore";
 
@@ -103,7 +104,10 @@ function JoinPageContent() {
     if (!isConnected || !address || !circleAddress || !asset || requiredDeposit === 0n) return;
     if (!hasApproval) {
       setPendingAction("approve");
-      write({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, requiredDeposit] });
+      // Approve once for the max amount rather than the exact deposit — this is the one unsponsored,
+      // self-paid step in the whole flow (see useSponsoredWrite), so it should only ever have to
+      // happen once per member per circle, not burn real gas again on every future top-up.
+      write({ address: asset, abi: erc20Abi, functionName: "approve", args: [circleAddress, maxUint256] });
       return;
     }
     setPendingAction("join");
@@ -183,7 +187,7 @@ function JoinPageContent() {
               {isConnected && insufficientBalance && (
                 <p className="form-error">You need {depositLabel} USDC in this wallet to join — get Base Sepolia test USDC from a faucet first.</p>
               )}
-              {writeError && <p className="form-error">{writeError.message}</p>}
+              {writeError && <p className="form-error">{formatWriteError(writeError)}</p>}
               <button
                 className="solid-button wide-button"
                 disabled={!isConnected || !asset || requiredDeposit === 0n || loading || insufficientBalance}

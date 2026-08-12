@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { useAccount, useSwitchChain } from "wagmi";
+import { baseSepolia } from "wagmi/chains";
 import {
+  Droplets,
   Grid2X2,
   History,
   Menu,
@@ -21,6 +24,7 @@ const items = [
   { label: "My circles", href: "/circles", icon: UsersRound },
   { label: "Activity", href: "/activity", icon: History },
   { label: "Trust score", href: "/trust-score", icon: ShieldCheck },
+  { label: "Faucet", href: "/faucet", icon: Droplets },
 ];
 
 export function AppShell({ active, title, children }: { active: string; title: string; children: ReactNode }) {
@@ -58,9 +62,29 @@ export function AppShell({ active, title, children }: { active: string; title: s
           <div className="crumb"><span>Cadence</span><span className="crumb-divider">/</span><strong>{title}</strong></div>
           <div className="top-actions"><WalletIdentity placement="header" /></div>
         </header>
+        <WrongNetworkBanner />
         <div className="route-content">{children}</div>
       </div>
     </main>
+  );
+}
+
+function WrongNetworkBanner() {
+  const { isConnected, chainId } = useAccount();
+  const { switchChain, isPending } = useSwitchChain();
+  if (!isConnected || chainId === baseSepolia.id) return null;
+
+  return (
+    <div className="stall-banner" style={{ margin: "0 34px", marginTop: 16 }}>
+      <ShieldAlert size={19} />
+      <div>
+        <b>Wrong network.</b>
+        <p>Your wallet is connected to a different chain — Cadence runs on Base Sepolia, so contract actions here won&apos;t work until you switch.</p>
+      </div>
+      <button className="outline-button" onClick={() => switchChain({ chainId: baseSepolia.id })} disabled={isPending} type="button">
+        {isPending ? "Switching…" : "Switch to Base Sepolia"}
+      </button>
+    </div>
   );
 }
 

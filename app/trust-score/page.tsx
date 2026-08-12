@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useAccount, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { useAccount } from "wagmi";
 import { AppShell } from "../../components/AppShell";
 import { ArrowUpRight, Check, CircleCheck, ShieldCheck, Sparkles, Trophy } from "lucide-react";
 import { cadenceContracts, trustScoreRegistryAbi } from "../../lib/contracts";
+import { formatWriteError } from "../../lib/formatError";
+import { useSponsoredWrite } from "../../lib/useSponsoredWrite";
 import { useTrustScore } from "../../lib/useTrustScore";
 
 export default function TrustScorePage() {
@@ -115,8 +117,7 @@ export default function TrustScorePage() {
 
 function LinkIdentityPanel({ onLinked }: { onLinked: () => void }) {
   const [agentIdInput, setAgentIdInput] = useState("");
-  const { writeContract, data: hash, isPending, error } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { write, isPending, isConfirming, isSuccess, error, notice } = useSponsoredWrite();
 
   useEffect(() => {
     if (isSuccess) onLinked();
@@ -124,7 +125,7 @@ function LinkIdentityPanel({ onLinked }: { onLinked: () => void }) {
 
   const submit = () => {
     if (!agentIdInput) return;
-    writeContract({
+    write({
       address: cadenceContracts.trustScoreRegistry,
       abi: trustScoreRegistryAbi,
       functionName: "linkIdentity",
@@ -157,7 +158,8 @@ function LinkIdentityPanel({ onLinked }: { onLinked: () => void }) {
           <button className="solid-button" onClick={submit} disabled={!agentIdInput || isPending || isConfirming}>
             {isPending || isConfirming ? "Linking…" : "Link identity"} <Check size={16} />
           </button>
-          {error && <p className="form-error">{error.message}</p>}
+          {error && <p className="form-error">{formatWriteError(error)}</p>}
+          {notice && <p className="form-note sponsor-notice">{notice}</p>}
           {isSuccess && <p className="success-text">Identity linked.</p>}
         </div>
       </section>

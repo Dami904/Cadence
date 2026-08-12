@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { Address } from "viem";
 import { useAccount, usePublicClient } from "wagmi";
 import { getLogsChunked } from "./chainLogs";
@@ -9,7 +9,7 @@ import { useCadenceCircles } from "./useCadenceCircles";
 
 export type ActivityEntry = {
   key: string;
-  kind: "Contribution" | "Default covered" | "Payout" | "Circle completed" | "Member joined" | "Member left" | "Deposit replenished" | "Deposit covered" | "Deposit returned";
+  kind: "Contribution" | "Default covered" | "Default uncovered" | "Payout" | "Circle completed" | "Circle cancelled" | "Member joined" | "Member left" | "Deposit replenished" | "Deposit covered" | "Deposit returned";
   title: string;
   copy: string;
   timestamp: number;
@@ -31,8 +31,10 @@ type CircleLog = {
     | "MemberLeft"
     | "ContributionMade"
     | "DefaultCovered"
+    | "DefaultUncovered"
     | "PayoutExecuted"
     | "CircleCompleted"
+    | "CircleCancelled"
     | "DepositReplenished"
     | "DepositCovered"
     | "DepositReturned";
@@ -45,16 +47,19 @@ export function useActivityFeed() {
   const { myCircles, isLoading: isLoadingCircles } = useCadenceCircles();
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     if (isLoadingCircles) return;
     if (!publicClient || myCircles.length === 0) {
       setEntries([]);
+      setError(null);
       return;
     }
 
     let cancelled = false;
     setIsLoadingLogs(true);
+    setError(null);
 
     (async () => {
       const latest = await publicClient.getBlockNumber();
@@ -85,6 +90,14 @@ export function useActivityFeed() {
         if (log.eventName === "DefaultCovered") {
           return { key, hash, timestamp, isYou, kind: "Default covered", title: "Deposit covered a missed contribution", copy: `Round ${log.args.round} · ${shortAddress(log.args.member as string)}` };
         }
+        if (log.eventName === "DefaultUncovered") {
+          return { key, hash, timestamp, isYou, kind: "Default uncovered", title: "Deposit couldn't cover a missed contribution", copy: `Round ${log.args.round} · ${shortAddress(log.args.member as string)} needs a top-up` };
+        }
+        if (log.eventName === "CircleCancelled") {
+          // No member/recipient in this event's args — it fires once for the whole circle, not
+          // per member, so there's nothing to attribute "isYou" to.
+          return { key, hash, timestamp, isYou: false, kind: "Circle cancelled", title: "Circle cancelled", copy: "Never filled before its forming deadline — deposits are ready to withdraw" };
+        }
         if (log.eventName === "PayoutExecuted") {
           return { key, hash, timestamp, isYou, kind: "Payout", title: "Payout executed", copy: `Round ${log.args.round} to ${shortAddress(log.args.recipient as string)}` };
         }
@@ -104,9 +117,18 @@ export function useActivityFeed() {
           return { key, hash, timestamp, isYou: isYouPayer, kind: "Deposit covered", title: "Member covered another's deposit", copy: `${shortAddress(payer)} covered ${shortAddress(member)}'s deposit` };
         }
         if (log.eventName === "DepositReturned") {
-          return { key, hash, timestamp, isYou, kind: "Deposit returned", title: "Deposit returned", copy: `${shortAddress(log.args.member as string)}'s deposit was returned on completion` };
+          return { key, hash, timestamp, isYou, kind: "Deposit returned", title: "Deposit returned", copy: `${shortAddress(log.args.member as string)}'s deposit was withdrawn` };
         }
-        return { key, hash, timestamp, isYou, kind: "Member joined", title: "Member joined", copy: `${shortAddress(log.args.member as string)} joined the circle` };
+        // MemberJoined is the only remaining case, but every branch above is exhaustive over
+        // CircleLog["eventName"] — fall back to a safe, generic entry instead of assuming
+        // log.args.member exists if a future event type ever reaches here unhandled.
+        const member = log.args.member as string | undefined;
+        return {
+          key, hash, timestamp, isYou,
+          kind: "Member joined",
+          title: log.eventName === "MemberJoined" ? "Member joined" : log.eventName,
+          copy: member ? `${shortAddress(member)} joined the circle` : "See transaction for details",
+        };
       });
 
       mapped.sort((a, b) => b.timestamp - a.timestamp);
@@ -115,8 +137,11 @@ export function useActivityFeed() {
         setEntries(mapped.slice(0, 30));
         setIsLoadingLogs(false);
       }
-    })().catch(() => {
-      if (!cancelled) setIsLoadingLogs(false);
+    })().catch((err) => {
+      if (!cancelled) {
+        setIsLoadingLogs(false);
+        setError(err instanceof Error ? err : new Error("Failed to load activity"));
+      }
     });
 
     return () => {
@@ -124,5 +149,5 @@ export function useActivityFeed() {
     };
   }, [publicClient, myCircles, isLoadingCircles]);
 
-  return { entries, isLoading: isLoadingCircles || isLoadingLogs };
+  return { entries, isLoading: isLoadingCircles || isLoadingLogs, error };
 }

@@ -15,12 +15,23 @@ function shortAddress(address: string) {
 function stageLabel(card: CircleCard) {
   if (card.status === CircleStatus.Forming) return `Forming · ${String(card.memberCount)} of ${String(card.targetMemberCount)} joined`;
   if (card.status === CircleStatus.Completed) return "Completed";
+  if (card.status === CircleStatus.Cancelled) return "Cancelled";
   return `Active · Round ${String(card.currentRound)} of ${String(card.targetMemberCount)}`;
+}
+
+// Real status, not list position — Forming reads as "waiting" (yellow), Active as "running"
+// (teal), Completed as "done" (violet), Cancelled as "stopped" (coral).
+function stageTone(card: CircleCard) {
+  if (card.status === CircleStatus.Forming) return "yellow";
+  if (card.status === CircleStatus.Completed) return "violet";
+  if (card.status === CircleStatus.Cancelled) return "coral";
+  return "teal";
 }
 
 function payoutLabel(card: CircleCard) {
   if (card.status === CircleStatus.Forming) return "Starts when full";
   if (card.status === CircleStatus.Completed) return "Circle complete";
+  if (card.status === CircleStatus.Cancelled) return "Cancelled — deposits refundable";
   return new Date(Number(card.currentRoundDeadline) * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
@@ -73,14 +84,14 @@ export default function CirclesPage() {
         </section>
       ) : (
         <div className="circle-list">
-          {cards.map((card, index) => (
+          {cards.map((card) => (
             <article className="circle-card" key={card.address}>
-              <div className={`circle-card-art ${index % 2 === 0 ? "teal" : "coral"}`}>
+              <div className={`circle-card-art ${stageTone(card)}`}>
                 <span>{card.address.slice(2, 4).toUpperCase()}</span><i /><i /><i />
               </div>
               <div className="circle-card-main">
                 <div>
-                  <span className={`circle-stage ${index % 2 === 0 ? "teal" : "coral"}`}><i /> {stageLabel(card)}</span>
+                  <span className={`circle-stage ${stageTone(card)}`}><i /> {stageLabel(card)}</span>
                   <h2>{shortAddress(card.address)}</h2>
                   <p><UsersRound size={15} /> {String(card.memberCount)} of {String(card.targetMemberCount)} members</p>
                 </div>

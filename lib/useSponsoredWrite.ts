@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { encodeFunctionData, type Address } from "viem";
 import { useAccount, usePublicClient, useSignTypedData, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { baseSepolia } from "wagmi/chains";
 import { cadenceContracts, forwarderAbi, FORWARDER_EIP712_DOMAIN_NAME, FORWARDER_EIP712_DOMAIN_VERSION } from "./contracts";
 
 const RELAY_GAS_LIMIT = 300_000n;
@@ -54,6 +55,12 @@ export function useSponsoredWrite() {
       setIsPending(true);
       try {
         if (!address || !publicClient || chainId === undefined) throw new Error("Wallet not connected");
+        // Caught here, before ever asking for a signature, so a wrong-network mismatch reads as
+        // a clear instruction instead of a late, confusing failure from the signature domain or
+        // the relay rejecting a request signed for the wrong chain.
+        if (chainId !== baseSepolia.id) {
+          throw new Error("Your wallet is on the wrong network — switch to Base Sepolia and try again.");
+        }
         if (cadenceContracts.forwarder === "0x0000000000000000000000000000000000000000") {
           await payOwnGas(call);
           return;
